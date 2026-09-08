@@ -70,6 +70,30 @@ wan_up() {
 	echo "wan PHY reset done, gpio-0: $(mdio gpio-0 phy 0 raw 2) $(mdio gpio-0 phy 1 raw 2)"
 }
 
+# Fan: Microchip EMC2104 at 0x2f on the same bus, PWM 100% at power-on.
+# Vendor programming (velocloud-vc.c vc_5x0_probe_fan): PWM divider, an
+# 8-row RPM lookup table (tach target vs. temp; below 50C the fan stops,
+# 2132 RPM at 50C .. 5506 RPM at 71C), closed-loop mode, 2C hysteresis,
+# then lock/enable the table.  Product ID reg 0xfd must read 0x1d.
+fan_up() {
+	[ -d /sys/bus/i2c/devices/i2c-9 ] || return 1
+	[ "$(i2cget -y 9 0x2f 0xfd 2>/dev/null)" = "0x1d" ] || { echo "no EMC2104 at 0x2f"; return 1; }
+	E() { i2cset -y 9 0x2f "$1" "$2"; }
+	E 0x41 0x80
+	E 0x50 0x00
+	i=0x51
+	for b in 0x56 0x32 0x32 0x32 0xff  0x46 0x35 0x35 0x35 0xff \
+		 0x3b 0x38 0x38 0x38 0xff  0x33 0x3b 0x3b 0x3b 0xff \
+		 0x2d 0x3e 0x3e 0x3e 0xff  0x28 0x41 0x41 0x41 0xff \
+		 0x24 0x44 0x44 0x44 0xff  0x21 0x47 0x47 0x47 0xff; do
+		E $i $b; i=$(( i + 1 ))
+	done
+	E 0x42 0x90
+	E 0x79 0x02
+	E 0x50 0x20
+	echo "fan: EMC2104 lookup table enabled, temps $(i2cget -y 9 0x2f 0)/$(i2cget -y 9 0x2f 2)/$(i2cget -y 9 0x2f 4)/$(i2cget -y 9 0x2f 6) C"
+}
+
 start() {
 	[ -x /usr/bin/mdio ] || { echo "mdio-tools missing"; return 1; }
 	for B in /sys/class/mdio_bus/igb-vc-*; do
@@ -77,4 +101,5 @@ start() {
 		switch_up "$(basename "$B")"
 	done
 	wan_up
+	fan_up
 }
