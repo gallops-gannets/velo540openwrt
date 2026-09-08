@@ -91,6 +91,23 @@ fan_up() {
 	E 0x42 0x90
 	E 0x79 0x02
 	E 0x50 0x20
+	# PCA9557@0x1c pins 6 (FORCE_PWM) and 7 (FORCE_12V) must be high for the
+	# PWM to take effect; low = fan hard-wired to full speed.  Pins 0/1 are
+	# PoE control: never touch them.
+	[ -d /sys/bus/i2c/devices/9-001c ] || echo pca9557 0x1c > /sys/bus/i2c/devices/i2c-9/new_device
+	sleep 1
+	b2=""
+	for c in /sys/class/gpio/gpiochip*; do
+		[ "$(cat $c/label 2>/dev/null)" = "9-001c" ] && b2=${c#*gpiochip}
+	done
+	if [ -n "$b2" ]; then
+		for p in 6 7; do
+			g=$(( b2 + p ))
+			[ -d /sys/class/gpio/gpio$g ] || echo $g > /sys/class/gpio/export
+			echo out > /sys/class/gpio/gpio$g/direction
+			echo 1 > /sys/class/gpio/gpio$g/value
+		done
+	fi
 	echo "fan: EMC2104 lookup table enabled, temps $(i2cget -y 9 0x2f 0)/$(i2cget -y 9 0x2f 2)/$(i2cget -y 9 0x2f 4)/$(i2cget -y 9 0x2f 6) C"
 }
 

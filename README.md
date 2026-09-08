@@ -11,7 +11,7 @@ Status (tested on an EDGE540 board rev 2.8):
 | SFP1/SFP2 (I350) | working (eth2, eth3) |
 | GE1/GE2 (88E1514 behind I354 func 2/3) | **working** (eth4 = wan, eth5): PCA9557 reset pulse + patched mdio-gpio |
 | TCO watchdog | working (kmod-itco-wdt) |
-| Fan (EMC2104 @ i2c 0x2f) | working: vendor lookup table programmed at boot, silent below 50 C; stock kernel leaves it at 100% |
+| Fan (EMC2104 @ i2c 0x2f) | working: vendor lookup table programmed at boot + FORCE_PWM/FORCE_12V pins on PCA9557@0x1c; off below 50 C. Stock kernel leaves it at 100% |
 | USB 3 ports (TI TUSB7340) | broken on 6.12: controller does not halt; `patches/220-*` is a port of the vendor fix but xhci is built into the OpenWrt x86 kernel, so it needs a full kernel build, not the SDK |
 | DSA / per-port control | not yet (mv88e6xxx via platform data, needs a small DSA-core patch for two trees) |
 
@@ -70,3 +70,30 @@ mdio igb-vc-0000:00:14.0 raw 0x13 3      # 88E6176 product id, expect 0x176x
 mdio igb-vc-0000:00:14.0 mvls
 i2cdetect -y 0                           # PCA9557 reset expanders at 0x18/0x1c
 ```
+
+## Open items
+
+1. **USB 3 ports (TI TUSB7340 xHCI).** SeaBIOS leaves the controller running
+   and it ignores the halt request, so 6.12 fails `xhci_gen_setup` with -110.
+   `patches/220-xhci-ti-tusb73x0-force-hcrst.patch` ports the vendor fix
+   (force HCRST when the halt times out) but xhci is built into OpenWrt's x86
+   kernel: applying it needs a full OpenWrt kernel build with the patch in
+   `target/linux/x86/patches-6.12/`, not the SDK.  Low value: USB 2 works,
+   the internal disk is USB 2, only the two blue sockets are affected.
+2. **DSA for the two 88E6176.** Today they are unmanaged 4-port switches
+   behind eth0/eth1.  mainline `mv88e6xxx` can drive them via platform data
+   on the `igb-vc-*` buses (both `dsa_core.ko` and `mv88e6xxx.ko` are modules
+   on x86, so this is SDK-buildable).  Needed:
+   - a glue module creating an `mdio_device` at addr 0 on each bus with
+     `struct dsa_mv88e6xxx_pdata` (compatible "marvell,mv88e6085", ports
+     lan1-4 + cpu on port 4, ports 5/6 unused);
+   - `net/dsa/dsa.c`: platform data hardcodes tree 0 / index 0, so the
+     second switch fails with "tree 0 already setup" (~10 lines);
+   - CPU port link: without a DT node DSA skips phylink for the CPU port and
+     mv88e6xxx leaves port 4 unforced, so the SerDes link never comes up
+     (~30-50 lines in DSA/mv88e6xxx to accept a fixed-link from platform
+     data, or keep forcing port 4 from the init script after DSA setup);
+   - drop the port-state part of `velo540-switch` (DSA owns it).
+   Gains: lan1..lan8 as real interfaces (per-port link, VLANs, stats,
+   hardware bridging inside each switch).  Traffic between the two switches
+   still crosses the CPU unless ports 5/6 are described as DSA links.
