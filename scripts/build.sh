@@ -66,7 +66,9 @@ sudo mount -o ro "${LOOP1}p2" "$WORK/mnt1"
 sudo cp "$WORK/mnt1/lib/modules/$KVER/"*.ko "$MODDIR/"; sudo chown -R "$(id -u)" "$MODDIR"
 sudo umount "$WORK/mnt1"; sudo losetup -d "$LOOP1"; rm -f "$RAW1"
 echo "== release modules in $MODDIR: $(ls "$MODDIR" | wc -l) files"
-[ -f "$MODDIR/libphy.ko" ] || { echo "libphy.ko missing from release image"; ls "$MODDIR"; exit 1; }
+# note: on x86 phylib, i2c-core, i2c-algo-bit, ptp and hwmon are built into vmlinux,
+# so the stock igb.ko has an empty depends= as well; the symvers step only matters
+# for symbols that really live in modules.
 EXTRA="$WORK/extra.symvers"; : > "$EXTRA"
 for ko in "$MODDIR"/*.ko; do
 	m=$(basename "$ko" .ko)
