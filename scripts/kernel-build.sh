@@ -32,7 +32,8 @@ CFG
 for p in kmod-igb kmod-itco-wdt kmod-i2c-i801 kmod-gpio-pca953x kmod-mdio-gpio kmod-i2c-gpio kmod-dsa-mv88e6xxx \
 	 kmod-usb-storage-uas kmod-usb3 kmod-hwmon-coretemp i2c-tools mdio-tools kmod-mdio-netlink ethtool tcpdump-mini gpiod-tools \
 	 kmod-usb-net-qmi-wwan kmod-usb-net-cdc-mbim kmod-usb-serial-option kmod-usb-acm modemmanager mwan3 \
-	 luci luci-ssl luci-proto-modemmanager luci-app-mwan3 luci-app-attendedsysupgrade luci-app-package-manager; do
+	 luci luci-ssl luci-proto-modemmanager luci-app-mwan3 luci-app-attendedsysupgrade luci-app-package-manager \
+	 kmod-ath10k-ct ath10k-firmware-qca988x-ct wpad-basic-mbedtls iw; do
 	echo "CONFIG_PACKAGE_$p=y" >> .config
 done
 make defconfig >/dev/null
