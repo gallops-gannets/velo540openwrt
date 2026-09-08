@@ -104,7 +104,7 @@ diff -Naur a/drivers/net/ethernet/intel/igb/igb.h b/drivers/net/ethernet/intel/i
  void igb_down(struct igb_adapter *);
 diff -Naur a/drivers/net/ethernet/intel/igb/igb_main.c b/drivers/net/ethernet/intel/igb/igb_main.c
 --- a/drivers/net/ethernet/intel/igb/igb_main.c	2026-09-08 01:13:22
-+++ b/drivers/net/ethernet/intel/igb/igb_main.c	2026-09-08 01:13:22
++++ b/drivers/net/ethernet/intel/igb/igb_main.c	2026-09-08 03:15:47
 @@ -3515,6 +3515,9 @@
  	if (err)
  		goto err_register;
@@ -115,7 +115,15 @@ diff -Naur a/drivers/net/ethernet/intel/igb/igb_main.c b/drivers/net/ethernet/in
  	/* carrier off reporting is important to ethtool even BEFORE open */
  	netif_carrier_off(netdev);
  
-@@ -3884,6 +3887,7 @@
+@@ -3640,6 +3643,7 @@
+ 	if (hw->flash_address)
+ 		iounmap(hw->flash_address);
+ err_sw_init:
++	igb_vc_mii_unregister(adapter);	/* drops the external MDIO bus ref */
+ 	kfree(adapter->mac_table);
+ 	kfree(adapter->shadow_vfta);
+ 	igb_clear_interrupt_scheme(adapter);
+@@ -3884,6 +3888,7 @@
  	igb_disable_sriov(pdev, false);
  #endif
  
