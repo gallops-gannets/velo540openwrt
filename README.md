@@ -35,7 +35,7 @@ Each switch: ports 0-3 = LAN RJ45, 4 = CPU link, 5/6 = RGMII cross-links.
   and export their MDIO master as `mii_bus` `igb-vc-0000:00:14.{0,1}`,
   route PHY access on functions 2/3 to the external bus named by module
   parameter `vc_ext_mdio` (default `gpio-0`).
-* `glue/vc-edge5x0-mdio.c` - registers `mdio-gpio` on SoC GPIO 13/14 (rev B)
+* `package/velo540-glue/src/vc-edge5x0-mdio.c` - registers `mdio-gpio` on SoC GPIO 13/14 (rev B)
   or 11/12 (rev A) via `gpio-ich`, giving the bus the 88E1514s live on.
 * `patches/210-mdio-gpio-clear-level-before-input.patch` - gpio-ich on Avoton
   caches output levels and ORs them into reads; without this every odd PHY

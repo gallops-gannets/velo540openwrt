@@ -1,0 +1,35 @@
+From: VeloCloud Edge 5x0 OpenWrt port
+Subject: [PATCH] net: dsa: give each platform-data switch its own tree
+
+dsa_switch_parse() hard-codes tree 0 for switches described by platform
+data, so a board with two independent switches (each with its own CPU
+port and conduit) cannot register the second one: it lands in the same
+tree with the same index and fails.
+
+Pick the lowest free tree index instead.  Device-tree switches are not
+affected; platform data still cannot describe interconnected switches.
+
+--- a/net/dsa/dsa.c
++++ b/net/dsa/dsa.c
+@@ -1462,15 +1462,19 @@ static int dsa_switch_parse_ports(struct
+ 
+ static int dsa_switch_parse(struct dsa_switch *ds, struct dsa_chip_data *cd)
+ {
++	int index = 0;
+ 	int err;
+ 
+ 	ds->cd = cd;
+ 
+-	/* We don't support interconnected switches nor multiple trees via
+-	 * platform data, so this is the unique switch of the tree.
++	/* We don't support interconnected switches via platform data, so
++	 * this is the unique switch of its tree; use the lowest free tree
++	 * index so that several independent switches can coexist.
+ 	 */
+ 	ds->index = 0;
+-	ds->dst = dsa_tree_touch(0);
++	while (dsa_tree_find(index))
++		index++;
++	ds->dst = dsa_tree_touch(index);
+ 	if (!ds->dst)
+ 		return -ENOMEM;

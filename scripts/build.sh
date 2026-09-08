@@ -106,9 +106,9 @@ make -C "$LINUX" ARCH=x86 CROSS_COMPILE="$CROSS" M=drivers/net/mdio KBUILD_EXTRA
 cp "$MDIO/mdio-gpio.ko" "$OUT/mdio-gpio.ko"
 
 echo "== building vc-edge5x0-mdio.ko"
-rm -rf "$WORK/glue" && cp -r "$REPO/glue" "$WORK/glue"
+rm -rf "$WORK/glue" && cp -r "$REPO/package/velo540-glue/src" "$WORK/glue"
 make -C "$LINUX" ARCH=x86 CROSS_COMPILE="$CROSS" M="$WORK/glue" KBUILD_EXTRA_SYMBOLS="$EXTRA" modules
-cp "$WORK/glue/vc-edge5x0-mdio.ko" "$OUT/"
+cp "$WORK/glue/vc-edge5x0-mdio.ko" "$WORK/glue/vc-edge5x0-dsa.ko" "$OUT/"
 for k in "$OUT"/*.ko; do echo "-- $(basename "$k")"; "${CROSS}strip" --strip-debug "$k"; modinfo "$k" | grep -E '^(vermagic|depends|parm)'; done
 cp "$MODDIR"/i2c-gpio.ko "$OUT/" 2>/dev/null || true
 echo "-- stock igb.ko for comparison:"; modinfo "$MODDIR/igb.ko" | grep -E '^(vermagic|depends)'
@@ -116,7 +116,7 @@ echo "-- stock igb.ko for comparison:"; modinfo "$MODDIR/igb.ko" | grep -E '^(ve
 ############ 2b. ImageBuilder pass 2: with the modules overlaid ############
 FILES="$WORK/files"; rm -rf "$FILES"; cp -r "$REPO/files" "$FILES"
 mkdir -p "$FILES/lib/modules/$KVER"
-cp "$OUT"/igb.ko "$OUT"/vc-edge5x0-mdio.ko "$OUT"/mdio-gpio.ko "$FILES/lib/modules/$KVER/"
+cp "$OUT"/igb.ko "$OUT"/vc-edge5x0-mdio.ko "$OUT"/vc-edge5x0-dsa.ko "$OUT"/mdio-gpio.ko "$FILES/lib/modules/$KVER/"
 echo "== ImageBuilder pass 2"
 make -C "$WORK/$IB" image PROFILE=generic PACKAGES="$(echo $PACKAGES)" FILES="$FILES" 2>&1 | tail -15
 IMG=$(ls "$WORK/$IB"/bin/targets/x86/64/*-generic-ext4-combined.img.gz | head -1)
