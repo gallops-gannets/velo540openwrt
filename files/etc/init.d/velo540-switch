@@ -120,6 +120,20 @@ fan_up() {
 	echo "fan: EMC2104 lookup table enabled, temps $(i2cget -y 9 0x2f 0)/$(i2cget -y 9 0x2f 2)/$(i2cget -y 9 0x2f 4)/$(i2cget -y 9 0x2f 6) C"
 }
 
+# Front logo RGB LED: PCA9634 at 0x54 (channels 0..2 = R,G,B, PWM 0..255),
+# output enable on SoC GPIO 39 (SUS bank pin 7, gpio-ich line 551, active
+# low).  coreboot programs white but leaves the outputs disabled.
+led_up() {
+	[ -d /sys/bus/i2c/devices/i2c-9 ] || return 1
+	LS() { i2cset -y 9 0x54 "$1" "$2"; }
+	LS 0 0x01; LS 1 0x14		# mode1: auto-increment; mode2: totem pole, invert
+	LS 0x0c 0xaa; LS 0x0d 0x00	# LED0-3 individual PWM, LED4-7 off
+	LS 2 "${1:-0x00}"; LS 3 "${2:-0xff}"; LS 4 "${3:-0x00}"	# R G B, default green
+	[ -d /sys/class/gpio/gpio551 ] || echo 551 > /sys/class/gpio/export
+	echo out > /sys/class/gpio/gpio551/direction
+	echo 0 > /sys/class/gpio/gpio551/value
+}
+
 start() {
 	[ -x /usr/bin/mdio ] || { echo "mdio-tools missing"; return 1; }
 	for B in /sys/class/mdio_bus/igb-vc-*; do
@@ -128,4 +142,5 @@ start() {
 	done
 	wan_up
 	fan_up
+	led_up
 }
