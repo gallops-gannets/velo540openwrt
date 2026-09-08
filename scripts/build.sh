@@ -90,18 +90,30 @@ echo "== building igb.ko"
 make -C "$LINUX" ARCH=x86 CROSS_COMPILE="$CROSS" CONFIG_IGB=m M=drivers/net/ethernet/intel/igb KBUILD_EXTRA_SYMBOLS="$EXTRA" modules
 cp "$IGB/igb.ko" "$OUT/"
 
+echo "== building mdio-gpio.ko (gpio-ich output-level cache workaround)"
+MDIO="$LINUX/drivers/net/mdio"
+if [ ! -f "$MDIO/mdio-gpio.c" ]; then
+	curl -sSL "https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-$KVER.tar.xz" \
+	  | tar -xJ -C "$LINUX" --strip-components=1 --wildcards "linux-$KVER/drivers/net/mdio/*"
+fi
+if ! grep -q "cached level is 0" "$MDIO/mdio-gpio.c"; then
+	(cd "$LINUX" && patch -p1 --forward < "$REPO"/patches/210-mdio-gpio-clear-level-before-input.patch)
+fi
+make -C "$LINUX" ARCH=x86 CROSS_COMPILE="$CROSS" M=drivers/net/mdio KBUILD_EXTRA_SYMBOLS="$EXTRA" modules 2>&1 | grep -E "mdio-gpio|error|Error" || true
+cp "$MDIO/mdio-gpio.ko" "$OUT/mdio-gpio.ko"
+
 echo "== building vc-edge5x0-mdio.ko"
 rm -rf "$WORK/glue" && cp -r "$REPO/glue" "$WORK/glue"
 make -C "$LINUX" ARCH=x86 CROSS_COMPILE="$CROSS" M="$WORK/glue" KBUILD_EXTRA_SYMBOLS="$EXTRA" modules
 cp "$WORK/glue/vc-edge5x0-mdio.ko" "$OUT/"
 for k in "$OUT"/*.ko; do echo "-- $(basename "$k")"; "${CROSS}strip" --strip-debug "$k"; modinfo "$k" | grep -E '^(vermagic|depends|parm)'; done
-cp "$MODDIR"/i2c-gpio.ko "$MODDIR"/mdio-gpio.ko "$OUT/" 2>/dev/null || true
+cp "$MODDIR"/i2c-gpio.ko "$OUT/" 2>/dev/null || true
 echo "-- stock igb.ko for comparison:"; modinfo "$MODDIR/igb.ko" | grep -E '^(vermagic|depends)'
 
 ############ 2b. ImageBuilder pass 2: with the modules overlaid ############
 FILES="$WORK/files"; rm -rf "$FILES"; cp -r "$REPO/files" "$FILES"
 mkdir -p "$FILES/lib/modules/$KVER"
-cp "$OUT"/igb.ko "$OUT"/vc-edge5x0-mdio.ko "$FILES/lib/modules/$KVER/"
+cp "$OUT"/igb.ko "$OUT"/vc-edge5x0-mdio.ko "$OUT"/mdio-gpio.ko "$FILES/lib/modules/$KVER/"
 echo "== ImageBuilder pass 2"
 make -C "$WORK/$IB" image PROFILE=generic PACKAGES="$(echo $PACKAGES)" FILES="$FILES" 2>&1 | tail -15
 IMG=$(ls "$WORK/$IB"/bin/targets/x86/64/*-generic-ext4-combined.img.gz | head -1)

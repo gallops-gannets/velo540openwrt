@@ -1,0 +1,26 @@
+diff -Naur a/drivers/net/mdio/mdio-gpio.c b/drivers/net/mdio/mdio-gpio.c
+--- a/drivers/net/mdio/mdio-gpio.c	2026-09-08 03:07:32
++++ b/drivers/net/mdio/mdio-gpio.c	2026-09-08 03:07:32
+@@ -65,10 +65,20 @@
+ 		return;
+ 	}
+ 
+-	if (dir)
++	if (dir) {
+ 		gpiod_direction_output(bitbang->mdio, 1);
+-	else
++	} else {
++		/* Some GPIO controllers (gpio-ich on Intel Avoton/Rangeley)
++		 * cannot read back the level of an output pin and keep a
++		 * software copy of it, which they OR into every read even
++		 * after the pin is switched to input.  Whenever the last bit
++		 * driven before the turnaround is a 1 (every odd register
++		 * address), all read bits then come back as 1.  Drive the
++		 * line low before releasing it so the cached level is 0.
++		 */
++		gpiod_set_value_cansleep(bitbang->mdio, 0);
+ 		gpiod_direction_input(bitbang->mdio);
++	}
+ }
+ 
+ static int mdio_get(struct mdiobb_ctrl *ctrl)
