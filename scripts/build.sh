@@ -34,14 +34,13 @@ echo "== kernel $KVER in $LINUX, toolchain $(basename "$TOOL")"
 grep -E '^CONFIG_(IGB|MODVERSIONS|OBJTOOL|MODULE_SIG)\b' "$LINUX/.config" || true
 
 IGB="$LINUX/drivers/net/ethernet/intel/igb"
-if [ ! -f "$IGB/igb_main.c" ]; then
-	echo "== SDK kernel tree has no igb sources; fetching v$KVER from kernel.org"
-	mkdir -p "$IGB"
-	for f in Makefile e1000_82575.c e1000_82575.h e1000_defines.h e1000_hw.h e1000_i210.c \
-		 e1000_i210.h e1000_mac.c e1000_mac.h e1000_mbx.c e1000_mbx.h e1000_nvm.c e1000_nvm.h \
-		 e1000_phy.c e1000_phy.h e1000_regs.h igb.h igb_ethtool.c igb_hwmon.c igb_main.c igb_ptp.c; do
-		curl -sSL -o "$IGB/$f" "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/plain/drivers/net/ethernet/intel/igb/$f?h=v$KVER"
-	done
+if [ ! -f "$IGB/igb_main.c" ] || ! grep -q '^static int igb_probe' "$IGB/igb_main.c"; then
+	echo "== SDK kernel tree has no igb sources; extracting v$KVER from the kernel.org tarball"
+	rm -rf "$IGB"; mkdir -p "$IGB"
+	curl -sSL "https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-$KVER.tar.xz" \
+	  | tar -xJ -C "$LINUX" --strip-components=1 --wildcards "linux-$KVER/drivers/net/ethernet/intel/igb/*"
+	ls "$IGB" | wc -l
+	grep -q '^static int igb_probe' "$IGB/igb_main.c" || { echo "igb sources look wrong"; exit 1; }
 fi
 if ! grep -q igb_vc "$IGB/Makefile"; then
 	echo "== applying igb patch"
