@@ -7,9 +7,9 @@ Status (tested on an EDGE540 board rev 2.8):
 
 | | |
 |---|---|
-| LAN1-8 (2x 88E6176 behind I354 func 0/1) | **working**, as two unmanaged 4-port switches on eth0/eth1, both in br-lan |
-| SFP1/SFP2 (I350) | working (eth2 = wan, eth3) |
-| GE1/GE2 (88E1514 behind I354 func 2/3) | in progress: PHYs answer on the bit-bang bus after the PCA9557 reset pulse |
+| LAN1-8 (2x 88E6176 behind I354 func 0/1) | **working**, as two unmanaged 4-port switches on eth0/eth1, both in br-lan (LAN1 = switch B port 1) |
+| SFP1/SFP2 (I350) | working (eth2, eth3) |
+| GE1/GE2 (88E1514 behind I354 func 2/3) | **working** (eth4 = wan, eth5): PCA9557 reset pulse + patched mdio-gpio |
 | TCO watchdog | working (kmod-itco-wdt) |
 | USB 3 ports (TI TUSB7340) | broken on 6.12: controller does not halt; `patches/220-*` is a port of the vendor fix but xhci is built into the OpenWrt x86 kernel, so it needs a full kernel build, not the SDK |
 | DSA / per-port control | not yet (mv88e6xxx via platform data, needs a small DSA-core patch for two trees) |
