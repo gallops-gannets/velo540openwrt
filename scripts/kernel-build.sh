@@ -25,6 +25,8 @@ CONFIG_TARGET_x86_64_DEVICE_generic=y
 CONFIG_TARGET_SERIAL="ttyS1"
 CONFIG_GRUB_BOOTOPTS="acpi_enforce_resources=lax"
 CONFIG_TARGET_ROOTFS_EXT4FS=y
+CONFIG_TARGET_ROOTFS_PARTSIZE=6144
+CONFIG_TARGET_KERNEL_PARTSIZE=16
 # CONFIG_TARGET_ROOTFS_SQUASHFS is not set
 # CONFIG_GRUB_EFI_IMAGES is not set
 CONFIG_PACKAGE_kmod-velo540-glue=y
@@ -33,7 +35,10 @@ for p in kmod-igb kmod-itco-wdt kmod-i2c-i801 kmod-gpio-pca953x kmod-mdio-gpio k
 	 kmod-usb-storage-uas kmod-usb3 kmod-hwmon-coretemp i2c-tools mdio-tools kmod-mdio-netlink ethtool tcpdump-mini gpiod-tools \
 	 kmod-usb-net-qmi-wwan kmod-usb-net-cdc-mbim kmod-usb-serial-option kmod-usb-acm modemmanager mwan3 \
 	 luci luci-ssl luci-proto-modemmanager luci-app-mwan3 luci-app-attendedsysupgrade luci-app-package-manager \
-	 kmod-ath10k-ct ath10k-firmware-qca988x-ct wpad-basic-mbedtls iw; do
+	 kmod-ath10k-ct ath10k-firmware-qca988x-ct wpad-basic-mbedtls iw \
+	 python3 tailscale ser2net collectd collectd-mod-cpu collectd-mod-memory collectd-mod-load collectd-mod-interface \
+	 collectd-mod-ping collectd-mod-thermal collectd-mod-uptime collectd-mod-exec luci-app-statistics \
+	 curl kmod-usb-serial-ftdi kmod-usb-serial-cp210x kmod-usb-serial-pl2303 kmod-usb-serial-ch341 picocom; do
 	echo "CONFIG_PACKAGE_$p=y" >> .config
 done
 make defconfig >/dev/null
