@@ -115,6 +115,22 @@ SFP1/SFP2 = eth2/eth3 (I350).  Both switch uplinks are in br-lan, so all
 eight LAN ports are one L2 domain; traffic between the two groups crosses
 the CPU.
 
+## Per-unit RAM page reservation
+
+This unit logs corrected ECC machine-checks (bank 5, memory controller) at one
+physical address, so `/etc/init.d/velo540-memmap` re-applies a `memmap=`
+reservation to grub.cfg at every boot from `/etc/config/velo540`, which
+sysupgrade preserves (grub.cfg is not).  To reserve a page:
+
+```sh
+uci add_list velo540.@memmap[0].reserve='4K$0x21bb4a000'   # page containing the MCE ADDR
+uci commit velo540 && /etc/init.d/velo540-memmap start && reboot
+```
+
+Note: modules built by the SDK workflow (`build-N`) do not load on the full
+kernel build (`kernel-N`) images: the kernel configs differ, so `struct module`
+sizes mismatch.  Use `kernel-N` for everything now that the box runs it.
+
 ## Roadmap: out-of-band management box
 
 Decided 2026-09-08. The box becomes the "witness and hands" for the home
