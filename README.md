@@ -11,6 +11,7 @@ Status (tested on an EDGE540 board rev 2.8):
 | SFP1/SFP2 (I350) | working (eth2, eth3) |
 | GE1/GE2 (88E1514 behind I354 func 2/3) | **working** (eth4 = wan, eth5): PCA9557 reset pulse + patched mdio-gpio |
 | TCO watchdog | working (kmod-itco-wdt) |
+| Front logo LED (PCA9634 @ i2c 0x54) | working: green once the boot script has run |
 | Fan (EMC2104 @ i2c 0x2f) | working: vendor lookup table programmed at boot + FORCE_PWM/FORCE_12V pins on PCA9557@0x1c; off below 50 C. Stock kernel leaves it at 100% |
 | USB 3 ports (TI TUSB7340) | broken on 6.12: controller does not halt; `patches/220-*` is a port of the vendor fix but xhci is built into the OpenWrt x86 kernel, so it needs a full kernel build, not the SDK |
 | DSA / per-port control | not yet (mv88e6xxx via platform data, needs a small DSA-core patch for two trees) |
