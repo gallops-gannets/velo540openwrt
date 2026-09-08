@@ -97,3 +97,14 @@ i2cdetect -y 0                           # PCA9557 reset expanders at 0x18/0x1c
    Gains: lan1..lan8 as real interfaces (per-port link, VLANs, stats,
    hardware bridging inside each switch).  Traffic between the two switches
    still crosses the CPU unless ports 5/6 are described as DSA links.
+3. **PoE (LTC4266 quad PSE).** Held in shutdown/reset by PCA9557@0x1c pins
+   0/1 and not on the bus scan.  Enabling it is a few register writes (auto
+   mode + detection enable per port) but it puts 48 V on four of the LAN
+   ports and the vendor driver (`vendor-patches-3.14/996-*`, 2500 lines)
+   manages a total current budget.  Not needed here; left alone on purpose.
+
+Current port map: LAN1-4/LAN5-8 = two dumb 4-port switches on eth0/eth1
+(LAN1 = switch B port 1); GE1/GE2 = eth4/eth5 (real NICs, 88E1514 PHY);
+SFP1/SFP2 = eth2/eth3 (I350).  Both switch uplinks are in br-lan, so all
+eight LAN ports are one L2 domain; traffic between the two groups crosses
+the CPU.
