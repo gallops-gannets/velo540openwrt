@@ -123,7 +123,7 @@ thing standing.  Order follows the outage story.
 
 | Phase | Work | Where |
 |---|---|---|
-| 0 | **In progress (2026-09-08):** `kernel-2` is installed on the internal disk via `sysupgrade` (keeps config, handles the disk signature; run it from the serial console, an SSH session drop kills it). `kernel-3` build adds a 6 GB rootfs, python3, tailscale, ser2net, collectd + LuCI statistics, curl, USB-serial kmods, picocom. Soak test running; watching dmesg for NMI/AER/link flaps | build + box |
+| 0 | **Build done (2026-09-08):** `kernel-3` is on the internal disk via `sysupgrade` (keeps config and handles the disk signature; run it from the serial console, an SSH drop kills it; a partition-layout change means a ~15 min full-image write). 6 GB rootfs, python3, tailscale, ser2net, collectd + LuCI statistics, curl, USB-serial kmods, picocom. Soak test running; one corrected memory-controller MCE seen so far, watching for recurrence | build + box |
 | 1 | Reachability: 5G (RM520N-GL on Waveshare dongle, or the Mudi 7 on GE2 as interim WAN), mwan3 failover, Tailscale | config |
 | 2 | Witness: probe script (WAN, router, Tower, living-room switch + devices, AP, UPS shell) pushing to Pushover/ntfy directly; offline copy of NetBox export, runbooks, router snapshots served by uhttpd | scripts |
 | 3 | Hands: ser2net consoles (router + Tower), router power via PoE (LTC4266, `vendor-patches-3.14/996-*`) or USB relay, TFTP/PXE recovery image for the router | scripts + PoE bring-up |
