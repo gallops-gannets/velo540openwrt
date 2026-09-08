@@ -56,7 +56,8 @@ fetch "$IB"
 PACKAGES="kmod-igb kmod-libphy kmod-itco-wdt kmod-i2c-i801 kmod-gpio-pca953x kmod-mdio-gpio kmod-dsa-mv88e6xxx
           kmod-usb-storage-uas kmod-usb3 kmod-hwmon-coretemp i2c-tools mdio-tools kmod-mdio-netlink ethtool tcpdump-mini
           kmod-i2c-gpio gpiod-tools
-          kmod-usb-net-qmi-wwan kmod-usb-net-cdc-mbim kmod-usb-serial-option kmod-usb-acm modemmanager mwan3"
+          kmod-usb-net-qmi-wwan kmod-usb-net-cdc-mbim kmod-usb-serial-option kmod-usb-acm modemmanager mwan3
+          luci luci-ssl luci-proto-modemmanager luci-app-mwan3 luci-app-attendedsysupgrade luci-app-package-manager"
 echo "== ImageBuilder pass 1: $PACKAGES"
 make -C "$WORK/$IB" image PROFILE=generic PACKAGES="$(echo $PACKAGES)" 2>&1 | tail -15
 # harvest the release .ko files from the pass-1 image's rootfs (partition 2)
