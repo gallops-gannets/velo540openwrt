@@ -2,3 +2,9 @@
 # memmap: RAM pages to keep out of use (see /etc/init.d/velo540-memmap), e.g.
 #   list reserve '4K$0x21bb4a000'
 config memmap
+
+# fan: software curve, see /usr/sbin/velo540-fand
+config fan
+	option min '96'
+	option t_min '40'
+	option t_max '75'

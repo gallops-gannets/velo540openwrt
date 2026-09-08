@@ -1,0 +1,42 @@
+#!/bin/sh
+# VeloCloud Edge 5x0 fan curve in software.
+# The EMC2104's lookup table only works in closed-loop RPM mode and the fan
+# on this board gives it no tach signal (reading stuck at 0xfff8), which
+# makes the chip re-run its spin-up burst every ~15 s: the fan "pulses".
+# So the chip is left in open-loop PWM mode and this loop sets the duty
+# from the hottest of its three sensors (internal, external 1 = CPU
+# diode, external 2).  Linear from `min` duty at `t_min` C to 255 at
+# `t_max` C, only rewritten when it moves by 4 or more (hysteresis).
+# Tunables in /etc/config/velo540:
+#   config fan
+#       option min   '96'    # duty 0-255 at or below t_min (default 96 = 38 %)
+#       option t_min '40'
+#       option t_max '75'
+#       option period '5'
+BUS=9; ADDR=0x2f
+min=$(uci -q get velo540.@fan[0].min);    min=${min:-96}
+tmin=$(uci -q get velo540.@fan[0].t_min); tmin=${tmin:-40}
+tmax=$(uci -q get velo540.@fan[0].t_max); tmax=${tmax:-75}
+period=$(uci -q get velo540.@fan[0].period); period=${period:-5}
+
+[ "$(i2cget -y $BUS $ADDR 0xfd 2>/dev/null)" = "0x1d" ] || { logger -t velo540-fand "no EMC2104 at $ADDR"; exit 1; }
+i2cset -y $BUS $ADDR 0x50 0x00	# lookup table off
+i2cset -y $BUS $ADDR 0x42 0x10	# open-loop PWM
+i2cset -y $BUS $ADDR 0x41 0x80	# PWM divider (vendor value)
+last=-100
+while :; do
+	t=0
+	for r in 0x00 0x02 0x04; do
+		v=$(printf %d "$(i2cget -y $BUS $ADDR $r 2>/dev/null)" 2>/dev/null) || continue
+		[ "$v" -gt 127 ] && continue	# diode fault / unused sensor
+		[ "$v" -gt "$t" ] && t=$v
+	done
+	if [ "$t" -le "$tmin" ]; then d=$min
+	elif [ "$t" -ge "$tmax" ]; then d=255
+	else d=$(( min + (255 - min) * (t - tmin) / (tmax - tmin) )); fi
+	diff=$(( d - last )); [ $diff -lt 0 ] && diff=$(( -diff ))
+	if [ $diff -ge 4 ]; then
+		i2cset -y $BUS $ADDR 0x40 $d && last=$d
+	fi
+	sleep "$period"
+done
