@@ -1,0 +1,49 @@
+diff -Naur a/drivers/usb/host/xhci-pci.c b/drivers/usb/host/xhci-pci.c
+--- a/drivers/usb/host/xhci-pci.c	2026-09-08 03:08:23
++++ b/drivers/usb/host/xhci-pci.c	2026-09-08 03:08:23
+@@ -484,7 +484,8 @@
+ 		xhci->quirks |= XHCI_RESET_ON_RESUME;
+ 
+ 	if (pdev->vendor == PCI_VENDOR_ID_TI && pdev->device == 0x8241)
+-		xhci->quirks |= XHCI_LIMIT_ENDPOINT_INTERVAL_7;
++		xhci->quirks |= XHCI_LIMIT_ENDPOINT_INTERVAL_7 |
++				XHCI_FORCE_HCRST_NOHALT;
+ 
+ 	if ((pdev->vendor == PCI_VENDOR_ID_BROADCOM ||
+ 	     pdev->vendor == PCI_VENDOR_ID_CAVIUM) &&
+diff -Naur a/drivers/usb/host/xhci.c b/drivers/usb/host/xhci.c
+--- a/drivers/usb/host/xhci.c	2026-09-08 03:08:23
++++ b/drivers/usb/host/xhci.c	2026-09-08 03:08:23
+@@ -5269,6 +5269,20 @@
+ 
+ 	/* Make sure the HC is halted. */
+ 	retval = xhci_halt(xhci);
++	if (retval && (xhci->quirks & XHCI_FORCE_HCRST_NOHALT)) {
++		/* TI TUSB73x0 left running by the BIOS ignores R/S=0;
++		 * a full HCRST does bring it back (VeloCloud vendor fix).
++		 */
++		u32 command;
++
++		xhci_warn(xhci, "HC not halted, forcing HCRST\n");
++		command = readl(&xhci->op_regs->command) | CMD_RESET;
++		writel(command, &xhci->op_regs->command);
++		retval = xhci_handshake(&xhci->op_regs->command, CMD_RESET, 0,
++					10 * 1000 * 1000);
++		if (!retval)
++			retval = xhci_halt(xhci);
++	}
+ 	if (retval)
+ 		return retval;
+ 
+diff -Naur a/drivers/usb/host/xhci.h b/drivers/usb/host/xhci.h
+--- a/drivers/usb/host/xhci.h	2026-09-08 03:08:23
++++ b/drivers/usb/host/xhci.h	2026-09-08 03:08:23
+@@ -1630,6 +1630,8 @@
+ #define XHCI_CDNS_SCTX_QUIRK	BIT_ULL(48)
+ #define XHCI_ETRON_HOST	BIT_ULL(49)
+ #define XHCI_LIMIT_ENDPOINT_INTERVAL_9 BIT_ULL(50)
++/* controller does not halt on R/S=0 after firmware handoff; force HCRST */
++#define XHCI_FORCE_HCRST_NOHALT	BIT_ULL(51)
+ 
+ 	unsigned int		num_active_eps;
+ 	unsigned int		limit_active_eps;
