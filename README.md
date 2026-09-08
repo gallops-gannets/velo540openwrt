@@ -50,6 +50,10 @@ Each switch: ports 0-3 = LAN RJ45, 4 = CPU link, 5/6 = RGMII cross-links.
   `acpi_enforce_resources=lax`, unique MBR disk signature (the internal disk
   usually carries the stock one and the kernel would mount the wrong rootfs).
 
+The image also carries ModemManager, the QMI/MBIM/serial-option USB drivers
+and mwan3 for a Quectel mini-PCIe LTE module with WAN failover (uqmi is no
+longer in the 25.12 repositories).
+
 GitHub Actions runs `scripts/build.sh` on every push and attaches the results
 to a release named `build-<n>`: the image, the two `.ko` files, and `build.log`.
 
