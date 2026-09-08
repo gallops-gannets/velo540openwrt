@@ -1,0 +1,90 @@
+--- a/drivers/net/ethernet/intel/igb/igb_main.c
++++ b/drivers/net/ethernet/intel/igb/igb_main.c
+@@ -266,6 +266,10 @@
+ module_param(bad_eeprom, int, 0);
+ MODULE_PARM_DESC(bad_eeprom, "Ignore all EEPROM errors to reflash it.");
+ 
++static int phy_lst = 0;
++module_param(phy_lst, int, 0444);
++MODULE_PARM_DESC(phy_lst, "PHY Link State Timer.");
++
+ #define DEFAULT_MSG_ENABLE (NETIF_MSG_DRV|NETIF_MSG_PROBE|NETIF_MSG_LINK)
+ static int debug = -1;
+ module_param(debug, int, 0);
+@@ -4155,6 +4159,22 @@
+ 	schedule_work(&adapter->watchdog_task);
+ }
+ 
++// get link state timeout;
++// use old compiled-in default if phy_lst = 0;
++// else calculate new value;
++
++static unsigned long
++phy_ls_to(void)
++{
++	unsigned long to;
++
++	if(phy_lst > 0)
++		to = jiffies + phy_lst;
++	else
++		to = round_jiffies(jiffies + 2 * HZ);
++	return(to);
++}
++
+ static void igb_watchdog_task(struct work_struct *work)
+ {
+ 	struct igb_adapter *adapter = container_of(work,
+@@ -4166,11 +4186,13 @@
+ 	u32 link;
+ 	int i;
+ 	u32 connsw;
++	unsigned long lst;
+ 
+ 	link = igb_has_link(adapter);
+ 
+ 	if (adapter->flags & IGB_FLAG_NEED_LINK_UPDATE) {
+-		if (time_after(jiffies, (adapter->link_check_timeout + HZ)))
++		lst = (phy_lst > 0)? phy_lst : HZ;
++		if (time_after(jiffies, (adapter->link_check_timeout + lst)))
+ 			adapter->flags &= ~IGB_FLAG_NEED_LINK_UPDATE;
+ 		else
+ 			link = false;
+@@ -4244,8 +4266,7 @@
+ 
+ 			/* link state has changed, schedule phy info update */
+ 			if (!test_bit(__IGB_DOWN, &adapter->state))
+-				mod_timer(&adapter->phy_info_timer,
+-					  round_jiffies(jiffies + 2 * HZ));
++				mod_timer(&adapter->phy_info_timer, phy_ls_to());
+ 		}
+ 	} else {
+ 		if (netif_carrier_ok(netdev)) {
+@@ -4268,8 +4289,7 @@
+ 
+ 			/* link state has changed, schedule phy info update */
+ 			if (!test_bit(__IGB_DOWN, &adapter->state))
+-				mod_timer(&adapter->phy_info_timer,
+-					  round_jiffies(jiffies + 2 * HZ));
++				mod_timer(&adapter->phy_info_timer, phy_ls_to());
+ 
+ 			/* link is down, time to check for alternate media */
+ 			if (adapter->flags & IGB_FLAG_MAS_ENABLE) {
+@@ -4334,12 +4354,13 @@
+ 
+ 	/* Reset the timer */
+ 	if (!test_bit(__IGB_DOWN, &adapter->state)) {
+-		if (adapter->flags & IGB_FLAG_NEED_LINK_UPDATE)
+-			mod_timer(&adapter->watchdog_timer,
+-				  round_jiffies(jiffies +  HZ));
++		if(phy_lst > 0)
++			lst = jiffies + phy_lst;
++		else if(adapter->flags & IGB_FLAG_NEED_LINK_UPDATE)
++			lst = round_jiffies(jiffies +  HZ);
+ 		else
+-			mod_timer(&adapter->watchdog_timer,
+-				  round_jiffies(jiffies + 2 * HZ));
++			lst = round_jiffies(jiffies + 2 * HZ);
++		mod_timer(&adapter->watchdog_timer, lst);
+ 	}
+ }
+ 

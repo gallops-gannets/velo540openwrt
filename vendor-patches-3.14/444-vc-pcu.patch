@@ -1,0 +1,925 @@
+diff -Naur a/drivers/gpio/Kconfig b/drivers/gpio/Kconfig
+--- a/drivers/gpio/Kconfig	2015-05-17 09:54:01.000000000 -0700
++++ b/drivers/gpio/Kconfig	2015-08-06 12:27:46.986307926 -0700
+@@ -689,6 +689,13 @@
+          ML7223/ML7831 is companion chip for Intel Atom E6xx series.
+          ML7223/ML7831 is completely compatible for Intel EG20T PCH.
+
++config GPIO_PCU
++       tristate "Intel Atom C2000 GPIO"
++       depends on PCI && X86
++       select GENERIC_IRQ_CHIP
++       help
++         This driver is for PCU(Platform Controller Unit) GPIO of Intel Atom C2000.
++
+ config GPIO_ML_IOH
+        tristate "OKI SEMICONDUCTOR ML7213 IOH GPIO support"
+        depends on PCI
+diff -Naur a/drivers/gpio/Makefile b/drivers/gpio/Makefile
+--- a/drivers/gpio/Makefile	2015-05-17 09:54:01.000000000 -0700
++++ b/drivers/gpio/Makefile	2015-08-06 12:27:46.986307926 -0700
+@@ -61,6 +61,7 @@
+ obj-$(CONFIG_GPIO_PCA953X)	+= gpio-pca953x.o
+ obj-$(CONFIG_GPIO_PCF857X)	+= gpio-pcf857x.o
+ obj-$(CONFIG_GPIO_PCH)		+= gpio-pch.o
++obj-$(CONFIG_GPIO_PCU)          += gpio-pcu.o
+ obj-$(CONFIG_GPIO_PL061)	+= gpio-pl061.o
+ obj-$(CONFIG_GPIO_PXA)		+= gpio-pxa.o
+ obj-$(CONFIG_GPIO_RC5T583)	+= gpio-rc5t583.o
+diff -Naur a/drivers/gpio/gpio-pcu.c b/drivers/gpio/gpio-pcu.c
+--- /dev/null
++++ b/drivers/gpio/gpio-pcu.c	2016-12-14 10:19:17.417422782 -0800
+@@ -0,0 +1,893 @@
++/*
++ * Copyright (C) 2014 Velocloud Inc.
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; version 2 of the License.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, write to the Free Software
++ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307, USA.
++ */
++
++#include <linux/module.h>
++#include <linux/kernel.h>
++#include <linux/pci.h>
++#include <linux/gpio.h>
++#include <linux/interrupt.h>
++#include <linux/irq.h>
++#include <linux/mfd/core.h>
++#include <linux/mfd/lpc_ich.h>
++#include <linux/dmi.h>
++#include <misc/velocloud.h>
++
++#undef DEBUG_GPIO_PCU		// define for debug;
++#undef DEBUG_WDT_PCU		// define for debug;
++
++// interrupt handling not supported;
++
++#define REG_LPC_ABASE 0x40
++#define	REG_LPC_ABASE_EN 0x02		// BAR GBASE is enabled;
++#define	REG_LPC_ABASE_IO 0x01		// BAR is i/o mapped;
++#define	REG_LPC_ABASE_MASK 0xff80
++
++#define LPC_ABASE_SMI_OFF 0x30
++#define LPC_ABASE_SMI_END (LPC_ABASE_SMI_OFF + 3)
++#define LPC_ABASE_TCO_OFF 0x60
++#define LPC_ABASE_TCO_END (LPC_ABASE_TCO_OFF + 0x1f)
++
++#define REG_LPC_PMC 0x44
++#define REG_LPC_PMC_MASK 0xfffffe00
++
++#define LPC_PBASE_PMC_OFF 0x08
++#define LPC_PBASE_PMC_END (LPC_PBASE_PMC_OFF + 4)
++
++#define	REG_LPC_GBASE 0x48		// GBASE in 00:1f.0 config space;
++#define	REG_LPC_GBASE_EN 0x02		// BAR GBASE is enabled;
++#define	REG_LPC_GBASE_IO 0x01		// BAR is i/o mapped;
++#define	REG_LPC_GBASE_MASK 0xff00	// GBASE in 00:1f.0 config space;
++
++#define REG_LPC_IOBASE 0x4c		// IOBASE for PFUNCx;
++#define REG_LPC_IOBASE_MASK 0xfffffe00
++
++// core well and suspend well registers have the same structure;
++// core well: GBASE + 0x00;
++// suspend well: GBASE + 0x80;
++
++// gp_lvl is BROKEN! in hardware;
++// when in output mode, previously written bits read back as 0;
++// need to cache all output writes in memory;
++// this creates issues with firmware!
++
++typedef struct pcu_gpio_regs pcu_gpio_regs_t;
++struct pcu_gpio_regs {
++	u32 use_sel;		// use select;
++	u32 io_sel;		// input/output direction;
++	u32 gp_lvl;		// GPIO level;
++	u32 tpe;		// trigger positive edge enable;
++	u32 tne;		// trigger negative edge enable;
++	u32 ts;			// trigger status;
++};
++
++#define PCU_USE_SEL_NATIVE 0	// use native function;
++#define PCU_USE_SEL_CUSTOM 1	// use custom GPIO function;
++
++#define PCU_IO_SEL_OUT 0	// output;
++#define PCU_IO_SEL_IN 1		// input;
++
++#define PCU_GP_LVL_0 0		// 0;
++#define PCU_GP_LVL_1 1		// 1;
++
++// GPIOs that we can touch;
++// the rest is likely under firmware control or the native function;
++
++// edge500;
++
++#define EDGE500_BB_I2C ((1<<13) | (1<<14))
++
++#define EDGE500_PCU_GPIO_MASK_SC 0 | EDGE500_BB_I2C
++#define EDGE500_PCU_GPIO_CLEAR_SC 0
++#define EDGE500_PCU_GPIO_IOSEL_SC 0x00028401 | EDGE500_BB_I2C
++#define EDGE500_PCU_GPIO_OUT_SC 0 | EDGE500_BB_I2C
++
++#define EDGE500_PCU_GPIO_MASK_SUS 0
++#define EDGE500_PCU_GPIO_CLEAR_SUS ((1<<24) | (1<<25) |(1<<26) | (1<<27))
++#define EDGE500_PCU_GPIO_IOSEL_SUS 0x00f80016
++#define EDGE500_PCU_GPIO_OUT_SUS 0
++
++// edge520/540;
++
++#define EDGE5X0_BB_SMB0 ((1<<8) | (1<<9))
++#define EDGE5X0_BB_SMB1 ((1<<11) | (1<<12))
++#define EDGE5X0_BB_SMB2 ((1<<13) | (1<<14))
++
++#define EDGE5X0_PCU_GPIO_MASK_SC (1<<4) | (1<<5) | EDGE5X0_BB_SMB1 | (1<<15) | (1<<17) | (1<<18) | EDGE5X0_BB_SMB2
++#define EDGE5X0_PCU_GPIO_CLEAR_SC 0
++#define EDGE5X0_PCU_GPIO_IOSEL_SC (1<<4) | (1<<5) | EDGE5X0_BB_SMB1 | (1<<15) | (1<<17) | (1<<18) | EDGE5X0_BB_SMB2
++#define EDGE5X0_PCU_GPIO_OUT_SC 0 | EDGE5X0_BB_SMB2
++
++#define EDGE5X0_PCU_GPIO_MASK_SUS (1<<2) | (1<<6) | (1<<7) | (1<<17) | (1<<18)
++#define EDGE5X0_PCU_GPIO_CLEAR_SUS (1<<24) | (1<<25) | (1<<26) | (1<<27)
++#define EDGE5X0_PCU_GPIO_IOSEL_SUS ((1<<17) | (1<<18))
++#define EDGE5X0_PCU_GPIO_OUT_SUS (1<<2)
++
++// rev B;
++
++#define EDGE5X0B_PCU_GPIO_MASK_SC (1<<4) | (1<<5) | (1<<15) | (1<<17) | (1<<18) | EDGE5X0_BB_SMB2
++#define EDGE5X0B_PCU_GPIO_CLEAR_SC EDGE5X0_BB_SMB1
++#define EDGE5X0B_PCU_GPIO_IOSEL_SC (1<<4) | (1<<5) | (1<<15) | (1<<17) | (1<<18) | EDGE5X0_BB_SMB2
++#define EDGE5X0B_PCU_GPIO_OUT_SC 0 
++
++#define EDGE5X0B_PCU_GPIO_MASK_SUS EDGE5X0_PCU_GPIO_MASK_SUS
++#define EDGE5X0B_PCU_GPIO_CLEAR_SUS EDGE5X0_PCU_GPIO_CLEAR_SUS
++#define EDGE5X0B_PCU_GPIO_IOSEL_SUS EDGE5X0_PCU_GPIO_IOSEL_SUS
++#define EDGE5X0B_PCU_GPIO_OUT_SUS EDGE5X0_PCU_GPIO_OUT_SUS
++
++// edge510;
++
++#define EDGE510_CONSOLE ((1<<6) | (1<<7))
++#define EDGE510_SMB0 ((1<<8) | (1<<9))
++#define EDGE510_SMB1 ((1<<11) | (1<<12))
++#define EDGE510_BLE_UART ((1<<13) | (1<<14))
++#define EDGE510_PIC_MCLR (1<<15)
++#define EDGE510_PIC_ICSPCLK (1<<16)
++#define EDGE510_PIC_ICSPDAT (1<<17)
++#define EDGE510_PIC (EDGE510_PIC_MCLR | EDGE510_PIC_ICSPCLK | EDGE510_PIC_ICSPDAT)
++#define EDGE510_SC_LPC (1<<21) | (1<<22) | (1<<23) | (1<<24) | (1<<25) | (1<<27) | (1<<28) | (1<<29)
++#define EDGE510_RESET_BTN (1<<30)
++
++#define EDGE510_SUS_TPM (1<<1)
++#define EDGE510_SUS_PIC (1<<2)
++#define EDGE510_SUS_SIMSEL (1<<6)
++#define EDGE510_SUS_BLE_SPI (1<<12)
++#define EDGE510_SUS_IGB (1<<13) | (1<<14) | (1<<15) | (1<<16) | (1<<24) | (1<<25)
++#define EDGE510_SUS_INT1543 (1<<17)
++
++#define EDGE510_PCU_GPIO_MASK_SC (EDGE510_PIC)
++#define EDGE510_PCU_GPIO_CLEAR_SC (EDGE510_CONSOLE | EDGE510_SMB0 | EDGE510_SMB1 | EDGE510_BLE_UART | EDGE510_SC_LPC | EDGE510_RESET_BTN)
++#define EDGE510_PCU_GPIO_IOSEL_SC (EDGE510_PIC)
++#define EDGE510_PCU_GPIO_OUT_SC 0 
++
++#define EDGE510_PCU_GPIO_MASK_SUS (EDGE510_SUS_TPM | EDGE510_SUS_PIC | EDGE510_SUS_SIMSEL | EDGE510_SUS_INT1543)
++#define EDGE510_PCU_GPIO_CLEAR_SUS (EDGE510_SUS_BLE_SPI | EDGE510_SUS_IGB)
++#define EDGE510_PCU_GPIO_IOSEL_SUS (EDGE510_SUS_TPM | EDGE510_SUS_PIC | EDGE510_SUS_INT1543)
++#define EDGE510_PCU_GPIO_OUT_SUS 0
++
++
++// symbols provided by velocloud module;
++
++extern struct dmi_system_id *vc_dmi;
++extern int vc_bbfw;
++
++// private data;
++// core well: ids 0..31;
++// suspend well: ids 32..63;
++
++enum pcu_gpio_id {
++	PCU_GPIO_SC = 0,
++	PCU_GPIO_SUS = 1,
++	N_PCU_GPIO,
++};
++
++typedef struct pcu_gpio pcu_gpio_t;
++struct pcu_gpio {
++	void __iomem *base;
++	pcu_gpio_regs_t __iomem *regs[N_PCU_GPIO];
++	struct device *dev;
++	spinlock_t spinlock;
++	u32 mask[N_PCU_GPIO];
++	u32 clear[N_PCU_GPIO];
++	u32 use_sel_bios[N_PCU_GPIO];
++	u32 use_sel_fixed[N_PCU_GPIO];
++	u32 iosel[N_PCU_GPIO];
++	u32 io_sel_bios[N_PCU_GPIO];
++	u32 out[N_PCU_GPIO];
++	struct gpio_chip gpio[N_PCU_GPIO];
++};
++
++static struct resource pcu_wdt_res[] = {
++	{ // acpi - tco
++	  .flags = IORESOURCE_IO,
++	},
++	{ // acpi - smi
++	  .flags = IORESOURCE_IO,
++	},
++	{ // pmc
++	  .flags = IORESOURCE_MEM,
++	},
++};
++
++static struct mfd_cell pcu_wdt_cell[] = {
++	{
++	  .name = "iTCO_wdt",
++	  .num_resources = ARRAY_SIZE(pcu_wdt_res),
++	  .resources = pcu_wdt_res,
++	  .ignore_resource_conflicts = true,
++	},
++};
++
++static struct lpc_ich_info lpc_ich_info[] = {
++	{
++	  .name = "Atom C2000 SoC",
++	  .iTCO_version = 3,
++	},
++};
++
++#ifdef DEBUG_GPIO_PCU
++
++// dump registers;
++
++static void
++pcu_dump_regs(pcu_gpio_t *chip, int which)
++{
++	pcu_gpio_regs_t __iomem *regs;
++
++	regs = chip->regs[which];
++	printk("%s: %s use_sel 0x%x, io_sel 0x%x, gp_lvl [0x%x]0x%x, tpe 0x%x, tne 0x%x, ts 0x%x\n",
++		__func__, which? "sus" : "sc",
++		ioread32(&regs->use_sel),
++		ioread32(&regs->io_sel),
++		chip->out[which], ioread32(&regs->gp_lvl),
++		ioread32(&regs->tpe),
++		ioread32(&regs->tne),
++		ioread32(&regs->ts));
++}
++
++#endif // DEBUG_GPIO_PCU
++
++// set gpio output;
++// atom c2000 bug: gp_lvl cannot be read back;
++
++static void
++pcu_gpio_set(struct gpio_chip *gpio, unsigned nr, int val)
++{
++	struct pcu_gpio *chip;
++	pcu_gpio_regs_t __iomem *regs;
++	unsigned long flags;
++	u32 idx, mask, lvl;
++
++	idx = (gpio->base >= 32);
++	chip = container_of(gpio, struct pcu_gpio, gpio[idx]);
++	mask = 1 << nr;
++	if( !(chip->mask[idx] & mask))
++		return;			// not a gpio;
++	regs = chip->regs[idx];
++
++	spin_lock_irqsave(&chip->spinlock, flags);
++
++	lvl = chip->out[idx];
++	if(val)
++		lvl |= mask;
++	else
++		lvl &= ~mask;
++	chip->out[idx] = lvl;
++	iowrite32(lvl, &regs->gp_lvl);
++
++	spin_unlock_irqrestore(&chip->spinlock, flags);
++}
++
++// get current value;
++// atom c2000 bug: gp_lvl cannot be read back;
++
++static int
++pcu_gpio_get(struct gpio_chip *gpio, unsigned nr)
++{
++	struct pcu_gpio *chip;
++	pcu_gpio_regs_t __iomem *regs;
++	unsigned long flags;
++	u32 idx, dir, lvl;
++
++	idx = (gpio->base >= 32);
++	chip = container_of(gpio, struct pcu_gpio, gpio[idx]);
++	regs = chip->regs[idx];
++
++	spin_lock_irqsave(&chip->spinlock, flags);
++
++	lvl = ioread32(&regs->gp_lvl);
++	dir = chip->iosel[idx];
++	lvl = (lvl & dir) | (chip->out[idx] & ~dir);
++
++	spin_unlock_irqrestore(&chip->spinlock, flags);
++	return((lvl >> nr) & 1);
++}
++
++// set direction to output;
++// atom c2000 bug: gp_lvl cannot be read back;
++
++static int
++pcu_gpio_direction_output(struct gpio_chip *gpio, unsigned nr, int val)
++{
++	struct pcu_gpio *chip;
++	pcu_gpio_regs_t __iomem *regs;
++	unsigned long flags;
++	u32 idx, mask, dir, lvl;
++
++	idx = (gpio->base >= 32);
++	chip = container_of(gpio, struct pcu_gpio, gpio[idx]);
++	mask = 1 << nr;
++	if( !(chip->mask[idx] & mask))
++		return(-EPERM);
++	regs = chip->regs[idx];
++
++	spin_lock_irqsave(&chip->spinlock, flags);
++
++	dir = ioread32(&regs->io_sel);
++	dir &= ~(PCU_IO_SEL_IN << nr);
++	iowrite32(dir, &regs->io_sel);
++
++	lvl = chip->out[idx];
++	if(val)
++		lvl |= mask;
++	else
++		lvl &= ~mask;
++	chip->out[idx] = lvl;
++	iowrite32(lvl, &regs->gp_lvl);
++
++	spin_unlock_irqrestore(&chip->spinlock, flags);
++
++	return(0);
++}
++
++// set direction to input;
++
++static int
++pcu_gpio_direction_input(struct gpio_chip *gpio, unsigned nr)
++{
++	struct pcu_gpio *chip;
++	pcu_gpio_regs_t __iomem *regs;
++	unsigned long flags;
++	u32 idx, mask, dir;
++
++	idx = (gpio->base >= 32);
++	chip = container_of(gpio, struct pcu_gpio, gpio[idx]);
++	mask = 1 << nr;
++	if( !(chip->mask[idx] & mask))
++		return(-EPERM);
++	regs = chip->regs[idx];
++
++	spin_lock_irqsave(&chip->spinlock, flags);
++
++	dir = ioread32(&regs->io_sel);
++	dir |= (PCU_IO_SEL_IN << nr);
++	iowrite32(dir, &regs->io_sel);
++
++	spin_unlock_irqrestore(&chip->spinlock, flags);
++
++	return(0);
++}
++
++// check bios sanity with re to gpio setup;
++// returns mask of bad bits;
++
++static u32
++pcu_check_use_sel(struct pcu_gpio *chip, int idx)
++{
++	u32 val, bad, mask;
++
++	val = ioread32(&chip->regs[idx]->use_sel);
++	chip->use_sel_bios[idx] = val;
++
++	// bits that must be 1;
++
++	mask = chip->mask[idx];
++	bad = ((val & mask) ^ mask);
++	val |= mask;
++
++	// bits that must be 0;
++
++	mask = chip->clear[idx];
++	bad |= (val & mask);
++	val &= ~mask;
++
++	chip->use_sel_fixed[idx] = val;
++	if(bad)
++		iowrite32(val, &chip->regs[idx]->use_sel);
++	return(bad);
++}
++
++// warn about bad firmware setup;
++
++static inline void
++pcu_warn_use_sel(struct device *dev, char *name, struct pcu_gpio *chip, int idx, u32 bad)
++{
++	dev_err(dev, "%s use_sel bios=0x%x, should be 0x%x, FIX bits 0x%x\n", name,
++		chip->use_sel_bios[idx], chip->use_sel_fixed[idx], bad);
++}
++
++// check bios sanity io_sel;
++// returns mask of bad bits;
++
++static u32
++pcu_check_io_sel(struct pcu_gpio *chip, int idx)
++{
++	u32 val, bad, cfg;
++
++	val = ioread32(&chip->regs[idx]->io_sel);
++	chip->io_sel_bios[idx] = val;
++
++	cfg = chip->iosel[idx];
++	bad = val ^ cfg;
++	if(bad)
++		iowrite32(cfg, &chip->regs[idx]->io_sel);
++	return(bad);
++}
++
++// warn about bad firmware setup;
++
++static inline void
++pcu_warn_io_sel(struct device *dev, char *name, struct pcu_gpio *chip, int idx, u32 bad)
++{
++	dev_err(dev, "%s io_sel bios=0x%x, should be 0x%x, FIX bits 0x%x\n", name,
++		chip->io_sel_bios[idx], chip->iosel[idx], bad);
++}
++
++// write initial gp_lvl bits;
++// all written bits must be cached in chip->out[];
++
++static inline void
++pcu_gp_lvl(struct pcu_gpio *chip, int idx)
++{
++	iowrite32(chip->out[idx], &chip->regs[idx]->gp_lvl);
++}
++
++// setup gpio pins;
++
++static void
++pcu_gpio_setup(struct pcu_gpio *chip, unsigned idx, unsigned base, unsigned ngpio)
++{
++	struct gpio_chip *gpio = chip->gpio + idx;
++
++	gpio->label = dev_name(chip->dev);
++	gpio->dev = chip->dev;
++	gpio->owner = THIS_MODULE;
++	gpio->direction_input = pcu_gpio_direction_input;
++	gpio->get = pcu_gpio_get;
++	gpio->direction_output = pcu_gpio_direction_output;
++	gpio->set = pcu_gpio_set;
++	gpio->dbg_show = NULL;
++	gpio->base = base;
++	gpio->ngpio = ngpio;
++	gpio->can_sleep = 0;
++	gpio->to_irq = NULL;
++}
++
++// finalize a mfd cell;
++
++static void
++lpc_ich_finalize_cell(struct mfd_cell *cell)
++{
++	cell->platform_data = lpc_ich_info;
++	cell->pdata_size = sizeof(struct lpc_ich_info);
++}
++
++// init wdt;
++
++static int
++pcu_wdt_init(struct pci_dev *pdev)
++{
++	s32 ret = -ENODEV;
++	u32 abase, pbase;
++	struct resource *res;
++
++	// get acpi base;
++
++	pci_bus_read_config_dword(pdev->bus, 
++		PCI_DEVFN(PCI_SLOT(pdev->devfn), 0),
++		REG_LPC_ABASE, &abase);
++	dev_info(&pdev->dev, "abase is 0x%x\n", abase);
++	if((abase & (REG_LPC_ABASE_EN | REG_LPC_ABASE_IO)) != (REG_LPC_ABASE_EN | REG_LPC_ABASE_IO)) {
++		dev_err(&pdev->dev, "%s: acpi space not enabled\n", __func__);
++		goto out;
++	}
++	abase &= REG_LPC_ABASE_MASK;
++
++	// get pmc base;
++
++	pci_bus_read_config_dword(pdev->bus, 
++		PCI_DEVFN(PCI_SLOT(pdev->devfn), 0),
++		REG_LPC_PMC, &pbase);
++	dev_info(&pdev->dev, "pbase is 0x%x\n", pbase);
++	pbase &= REG_LPC_PMC_MASK;
++
++	// sanity checks;
++
++	if( !abase) {
++		dev_err(&pdev->dev, "%s: acpi space not intialized\n", __func__);
++		goto out;
++	}
++	if( !pbase) {
++		dev_err(&pdev->dev, "%s: pmc space not intialized\n", __func__);
++		goto out;
++	}
++
++	// setup io spaces;
++
++	res = pcu_wdt_res + 0;
++	res->start = abase + LPC_ABASE_TCO_OFF;
++	res->end = abase + LPC_ABASE_TCO_END;
++
++	res++;
++	res->start = abase + LPC_ABASE_SMI_OFF;
++	res->end = abase + LPC_ABASE_SMI_END;
++
++	res++;
++	res->start = pbase + LPC_PBASE_PMC_OFF;
++	res->end = pbase + LPC_PBASE_PMC_END;
++
++	// add mfd device;
++
++	lpc_ich_finalize_cell(pcu_wdt_cell);
++	ret = mfd_add_devices(&pdev->dev, -1, pcu_wdt_cell, 1, NULL, 0, NULL);
++out:
++	return(ret);
++}
++
++// remove wdt;
++
++static void
++pcu_wdt_remove(struct pci_dev *pdev)
++{
++	mfd_remove_devices(&pdev->dev);
++}
++
++// alternative pin config;
++
++typedef struct pcu_pconf pcu_pconf_t;
++struct pcu_pconf {
++	char *name;	// descriptor string;
++	u32 off;	// offset from iobase;
++	u32 mask;	// bit mask;
++	u32 val;	// value to set;
++};
++
++// per-device use_sel configs;
++
++typedef struct pcu_hwcfg pcu_hwcfg_t;
++struct pcu_hwcfg {
++	u32 mask[N_PCU_GPIO];
++	u32 clear[N_PCU_GPIO];
++	u32 iosel[N_PCU_GPIO];
++	u32 out[N_PCU_GPIO];
++	pcu_pconf_t *pconf;
++};
++
++static pcu_hwcfg_t pcu_hw_edge500 = {
++	.mask[PCU_GPIO_SC] = EDGE500_PCU_GPIO_MASK_SC,
++	.mask[PCU_GPIO_SUS] = EDGE500_PCU_GPIO_MASK_SUS,
++	.clear[PCU_GPIO_SC] = EDGE500_PCU_GPIO_CLEAR_SC,
++	.clear[PCU_GPIO_SUS] = EDGE500_PCU_GPIO_CLEAR_SUS,
++	.iosel[PCU_GPIO_SC] = EDGE500_PCU_GPIO_IOSEL_SC,
++	.iosel[PCU_GPIO_SUS] = EDGE500_PCU_GPIO_IOSEL_SUS,
++	.out[PCU_GPIO_SC] = EDGE500_PCU_GPIO_OUT_SC,
++	.out[PCU_GPIO_SUS] = EDGE500_PCU_GPIO_OUT_SUS,
++};
++
++static pcu_hwcfg_t pcu_hw_edge5x0 = {
++	.mask[PCU_GPIO_SC] = EDGE5X0_PCU_GPIO_MASK_SC,
++	.mask[PCU_GPIO_SUS] = EDGE5X0_PCU_GPIO_MASK_SUS,
++	.clear[PCU_GPIO_SC] = EDGE5X0_PCU_GPIO_CLEAR_SC,
++	.clear[PCU_GPIO_SUS] = EDGE5X0_PCU_GPIO_CLEAR_SUS,
++	.iosel[PCU_GPIO_SC] = EDGE5X0_PCU_GPIO_IOSEL_SC,
++	.iosel[PCU_GPIO_SUS] = EDGE5X0_PCU_GPIO_IOSEL_SUS,
++	.out[PCU_GPIO_SC] = EDGE5X0_PCU_GPIO_OUT_SC,
++	.out[PCU_GPIO_SUS] = EDGE5X0_PCU_GPIO_OUT_SUS,
++};
++
++static pcu_hwcfg_t pcu_hw_edge5x0b = {
++	.mask[PCU_GPIO_SC] = EDGE5X0B_PCU_GPIO_MASK_SC,
++	.mask[PCU_GPIO_SUS] = EDGE5X0B_PCU_GPIO_MASK_SUS,
++	.clear[PCU_GPIO_SC] = EDGE5X0B_PCU_GPIO_CLEAR_SC,
++	.clear[PCU_GPIO_SUS] = EDGE5X0B_PCU_GPIO_CLEAR_SUS,
++	.iosel[PCU_GPIO_SC] = EDGE5X0B_PCU_GPIO_IOSEL_SC,
++	.iosel[PCU_GPIO_SUS] = EDGE5X0B_PCU_GPIO_IOSEL_SUS,
++	.out[PCU_GPIO_SC] = EDGE5X0B_PCU_GPIO_OUT_SC,
++	.out[PCU_GPIO_SUS] = EDGE5X0B_PCU_GPIO_OUT_SUS,
++};
++
++static pcu_pconf_t pcu_pconf_510[] = {
++	{ "uart0-rxd", 0x160, 0x7, 2 },
++	{ "uart0-txd", 0x170, 0x7, 2 },
++	{ 0 },
++};
++
++static pcu_hwcfg_t pcu_hw_edge510 = {
++	.mask[PCU_GPIO_SC] = EDGE510_PCU_GPIO_MASK_SC,
++	.mask[PCU_GPIO_SUS] = EDGE510_PCU_GPIO_MASK_SUS,
++	.clear[PCU_GPIO_SC] = EDGE510_PCU_GPIO_CLEAR_SC,
++	.clear[PCU_GPIO_SUS] = EDGE510_PCU_GPIO_CLEAR_SUS,
++	.iosel[PCU_GPIO_SC] = EDGE510_PCU_GPIO_IOSEL_SC,
++	.iosel[PCU_GPIO_SUS] = EDGE510_PCU_GPIO_IOSEL_SUS,
++	.out[PCU_GPIO_SC] = EDGE510_PCU_GPIO_OUT_SC,
++	.out[PCU_GPIO_SUS] = EDGE510_PCU_GPIO_OUT_SUS,
++	.pconf = pcu_pconf_510,
++};
++
++// map velocloud board id to hw data;
++
++static pcu_hwcfg_t *vc_board_hw[VC_N_BOARDS] = {
++	[VC_EDGE500] = &pcu_hw_edge500,
++	[VC_EDGE520] = &pcu_hw_edge5x0,
++	[VC_EDGE540] = &pcu_hw_edge5x0,
++	[VC_EDGE520B] = &pcu_hw_edge5x0b,
++	[VC_EDGE540B] = &pcu_hw_edge5x0b,
++	[VC_EDGE510] = &pcu_hw_edge510,
++};
++
++// probe pcu gpio;
++
++static int
++pcu_gpio_probe(struct pci_dev *pdev, const struct pci_device_id *pciid)
++{
++	s32 ret;
++	struct pcu_gpio *chip;
++	u32 gbase, iobase;
++	u32 bad, val;
++	unsigned long id = VC_NONE;
++	pcu_gpio_regs_t __iomem *sc, *sus;
++	u8 __iomem *ioa, *paddr;
++	const struct dmi_system_id *dmi;
++	pcu_hwcfg_t *hw;
++	pcu_pconf_t *pconf;
++
++	chip = kzalloc(sizeof(*chip), GFP_KERNEL);
++	ret = -ENOMEM;
++	if(chip == NULL) {
++		dev_err(&pdev->dev, "%s: kzalloc failed\n", __func__);
++		goto err_kalloc;
++	}
++
++	chip->dev = &pdev->dev;
++	ret = pci_enable_device(pdev);
++	if(ret) {
++		dev_err(&pdev->dev, "%s: pci_enable_device failed: %d\n", __func__, ret);
++		goto err_pci_enable;
++	}
++
++	ret = pci_request_regions(pdev, KBUILD_MODNAME);
++	if(ret) {
++		dev_err(&pdev->dev, "%s: pci_request_regions failed: %d\n", __func__, ret);
++		goto err_request_regions;
++	}
++
++	// read pci config space GBASE;
++
++	pci_bus_read_config_dword(pdev->bus, 
++		PCI_DEVFN(PCI_SLOT(pdev->devfn), 0),
++		REG_LPC_GBASE, &gbase);
++	dev_info(&pdev->dev, "gbase is 0x%x\n", gbase);
++	if((gbase & (REG_LPC_GBASE_EN | REG_LPC_GBASE_IO)) != (REG_LPC_GBASE_EN | REG_LPC_GBASE_IO))
++		goto err_request_regions;
++	gbase &= REG_LPC_GBASE_MASK;
++	if( !gbase)
++		goto err_request_regions;
++
++	// the GBASE region is only i/o mapped;
++
++	chip->base = ioport_map(gbase, 0x100);
++	if( !chip->base) {
++		dev_err(&pdev->dev, "%s: ioremap failed\n", __func__);
++		ret = -ENOMEM;
++		goto err_iomap;
++	}
++
++	sc = chip->base + 0x00;
++	sus = chip->base + 0x80;
++	chip->regs[PCU_GPIO_SC] = sc;
++	chip->regs[PCU_GPIO_SUS] = sus;
++
++	// the IOBASE is only i/o mapped;
++
++	pci_bus_read_config_dword(pdev->bus,
++		PCI_DEVFN(PCI_SLOT(pdev->devfn), 0),
++		REG_LPC_IOBASE, &iobase);
++	dev_info(&pdev->dev, "iobase is 0x%x\n", iobase);
++	iobase &= REG_LPC_IOBASE_MASK;
++
++	// determine velocloud board;
++
++	dmi = vc_dmi;
++	hw = NULL;
++	if(dmi) {
++		id = (unsigned long)dmi->driver_data;
++		if(id < VC_N_BOARDS)
++			hw = vc_board_hw[id];
++		dev_info(&pdev->dev, "%s\n", dmi->ident);
++	}
++
++	// patch alternative function PCONF;
++	// really have to read-mod-write only affected bits;
++
++	pconf = hw->pconf;
++	if(hw && iobase && pconf) {
++		ioa = ioremap(iobase, 0x100);
++		if( !ioa) {
++			dev_err(&pdev->dev, "%s: iobase remap failed\n", __func__);
++			ret = -ENOMEM;
++			goto err_iomap;
++		}
++		for(; pconf->name; pconf++) {
++			dev_info(&pdev->dev, "pconf %s\n", pconf->name);
++			paddr = ioa + pconf->off;
++			val = readl(paddr);
++			val = (val & ~pconf->mask) | (pconf->val & pconf->mask);
++			writel(val, paddr);
++		}
++	}
++
++	// per-system GPIO configuration;
++	// use BIOS programmed default for unknown boards;
++
++	if(hw) {
++		chip->mask[PCU_GPIO_SC] = hw->mask[PCU_GPIO_SC];
++		chip->mask[PCU_GPIO_SUS] = hw->mask[PCU_GPIO_SUS];
++		chip->clear[PCU_GPIO_SC] = hw->clear[PCU_GPIO_SC];
++		chip->clear[PCU_GPIO_SUS] = hw->clear[PCU_GPIO_SUS];
++		chip->iosel[PCU_GPIO_SC] = hw->iosel[PCU_GPIO_SC];
++		chip->iosel[PCU_GPIO_SUS] = hw->iosel[PCU_GPIO_SUS];
++		chip->out[PCU_GPIO_SC] = hw->out[PCU_GPIO_SC];
++		chip->out[PCU_GPIO_SUS] = hw->out[PCU_GPIO_SUS];
++	} else {
++		dev_info(&pdev->dev, "using BIOS setup\n");
++		chip->mask[PCU_GPIO_SC] = ioread32(&sc->use_sel);
++		chip->mask[PCU_GPIO_SUS] = ioread32(&sus->use_sel);
++		chip->clear[PCU_GPIO_SC] = 0;
++		chip->clear[PCU_GPIO_SUS] = 0;
++		chip->iosel[PCU_GPIO_SC] = ioread32(&sc->io_sel);
++		chip->iosel[PCU_GPIO_SUS] = ioread32(&sus->io_sel);
++		chip->out[PCU_GPIO_SC] = 0;
++		chip->out[PCU_GPIO_SUS] = 0;
++	}
++	if(vc_bbfw) {
++		chip->mask[PCU_GPIO_SC] |= EDGE5X0_BB_SMB0;
++		chip->iosel[PCU_GPIO_SC] |= EDGE5X0_BB_SMB0;
++		chip->out[PCU_GPIO_SC] |= EDGE5X0_BB_SMB0;
++	}
++
++	pci_set_drvdata(pdev, chip);
++	spin_lock_init(&chip->spinlock);
++
++	// check sanity of firmware;
++
++	ret = -EINVAL;
++
++	// check use_sel programming;
++
++	bad = pcu_check_use_sel(chip, PCU_GPIO_SC);
++	if(bad)
++		pcu_warn_use_sel(&pdev->dev, "sc", chip, PCU_GPIO_SC, bad);
++	bad = pcu_check_use_sel(chip, PCU_GPIO_SUS);
++	if(bad)
++		pcu_warn_use_sel(&pdev->dev, "sus", chip, PCU_GPIO_SUS, bad);
++
++	// check io_sel programming;
++
++	bad = pcu_check_io_sel(chip, PCU_GPIO_SC);
++	if(bad)
++		pcu_warn_io_sel(&pdev->dev, "sc", chip, PCU_GPIO_SC, bad);
++	bad = pcu_check_io_sel(chip, PCU_GPIO_SUS);
++	if(bad)
++		pcu_warn_io_sel(&pdev->dev, "sus", chip, PCU_GPIO_SUS, bad);
++
++	// the output register is broken;
++	// need to remember all writes to it;
++	// do initial output value assignment here;
++
++	pcu_gp_lvl(chip, PCU_GPIO_SC);
++	pcu_gp_lvl(chip, PCU_GPIO_SUS);
++
++#ifdef DEBUG_GPIO_PCU
++	pcu_dump_regs(chip, PCU_GPIO_SC);
++	pcu_dump_regs(chip, PCU_GPIO_SUS);
++#endif // DEBUG_GPIO_PCU
++
++	// register gpio ressources;
++
++	pcu_gpio_setup(chip, PCU_GPIO_SC, 0, 31);
++	ret = gpiochip_add(chip->gpio + PCU_GPIO_SC);
++	if(ret) {
++		dev_err(&pdev->dev, "%s: failed to register SC GPIO: %d\n", __func__, ret);
++		goto err_gpiochip_sc;
++	}
++
++	pcu_gpio_setup(chip, PCU_GPIO_SUS, 32, 28);
++	ret = gpiochip_add(chip->gpio + PCU_GPIO_SUS);
++	if(ret) {
++		dev_err(&pdev->dev, "%s: failed to register SUS GPIO: %d\n", __func__, ret);
++		goto err_gpiochip_sus;
++	}
++
++	// register watchdog;
++	// lpc_ich driver conflicts with our implementation;
++	// eventually, need to port pcu_gpio to use lpc_ich driver, when kernel > 3.18;
++
++	ret = pcu_wdt_init(pdev);
++	if(ret) {
++		dev_err(&pdev->dev, "%s: failed to init wdt: %d\n", __func__, ret);
++		goto err_gpiochip_sus;
++	}
++
++	return 0;
++
++err_gpiochip_sus:
++	gpiochip_remove(chip->gpio + PCU_GPIO_SC);
++err_gpiochip_sc:
++	pci_iounmap(pdev, chip->base);
++err_iomap:
++	pci_release_regions(pdev);
++err_request_regions:
++	pci_disable_device(pdev);
++err_pci_enable:
++	kfree(chip);
++err_kalloc:
++	dev_err(&pdev->dev, "%s: failed, returns %d\n", __func__, ret);
++	return ret;
++}
++
++// remove pcu gpio;
++
++static void
++pcu_gpio_remove(struct pci_dev *pdev)
++{
++	int ret;
++	struct pcu_gpio *chip = pci_get_drvdata(pdev);
++
++	pcu_wdt_remove(pdev);
++
++	ret = gpiochip_remove(chip->gpio + PCU_GPIO_SUS);
++	if(ret)
++		dev_err(&pdev->dev, "%s: failed SUS GPIO, %d", __func__, ret);
++	ret = gpiochip_remove(chip->gpio + PCU_GPIO_SC);
++	if(ret)
++		dev_err(&pdev->dev, "%s: failed SC GPIO, %d", __func__, ret);
++
++	pci_iounmap(pdev, chip->base);
++	pci_release_regions(pdev);
++	pci_disable_device(pdev);
++	kfree(chip);
++}
++
++#ifdef CONFIG_PM
++static int
++pcu_gpio_suspend(struct pci_dev *pdev, pm_message_t state)
++{
++	pci_save_state(pdev);
++	pci_set_power_state(pdev, pci_choose_state(pdev, state));
++	return(0);
++}
++
++static int
++pcu_gpio_resume(struct pci_dev *pdev)
++{
++	pci_set_power_state(pdev, PCI_D0);
++	pci_restore_state(pdev);
++	return(0);
++}
++#else
++#define pcu_gpio_suspend NULL
++#define pcu_gpio_resume NULL
++#endif
++
++static DEFINE_PCI_DEVICE_TABLE(pcu_gpio_pcidev_id) = {
++	{ PCI_DEVICE(PCI_VENDOR_ID_INTEL, 0x1f38) },
++	{ 0, }
++};
++MODULE_DEVICE_TABLE(pci, pcu_gpio_pcidev_id);
++
++static struct pci_driver pcu_gpio_driver = {
++	.name = "pcu_gpio",
++	.id_table = pcu_gpio_pcidev_id,
++	.probe = pcu_gpio_probe,
++	.remove = pcu_gpio_remove,
++	.suspend = pcu_gpio_suspend,
++	.resume = pcu_gpio_resume,
++};
++
++module_pci_driver(pcu_gpio_driver);
++
++MODULE_DESCRIPTION("Atom PCU GPIO PCI Driver");
++MODULE_LICENSE("GPL");

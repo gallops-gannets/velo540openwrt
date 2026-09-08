@@ -1,0 +1,301 @@
+--- a/drivers/platform/x86/Kconfig
++++ b/drivers/platform/x86/Kconfig
+@@ -778,4 +778,13 @@
+ 	  RGB LEDs and PWM fan on I2C.
+ 	  Say Y to enable support for the Velocloud boards.
+ 
++config VELOCLOUD_DSA
++	tristate "Support for the DSA on Velocloud"
++	depends on GPIO_PCH
++	depends on MDIO_BITBANG && MDIO_GPIO
++	help
++	  This option enables support for the DSA switches on GPIO on
++	  Velocloud boxes, such as Marvell 6165 managed GB switch.
++	  Say Y to enable support for DSA on Velocloud.
++
+ endif # X86_PLATFORM_DEVICES
+--- a/drivers/platform/x86/Makefile
++++ b/drivers/platform/x86/Makefile
+@@ -51,3 +51,4 @@
+ obj-$(CONFIG_APPLE_GMUX)	+= apple-gmux.o
+ obj-$(CONFIG_VELOCLOUD_VC)	+= velocloud-vc.o
++obj-$(CONFIG_VELOCLOUD_DSA)	+= velocloud-dsa.o
+ obj-$(CONFIG_INTEL_BAYTRAIL_MBI)	+= intel_baytrail.o
+--- a/drivers/platform/x86/velocloud-dsa.c
++++ b/drivers/platform/x86/velocloud-dsa.c
+@@ -0,0 +1,275 @@
++/* velocloud-dsa.c
++ * (c) Sandra Berndt (sberndt@velocloud.net)
++ *
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License as published by
++ *  the Free Software Foundation; either version 2 of the License, or
++ *  (at your option) any later version.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *  GNU General Public License for more details.
++ *
++ *  You should have received a copy of the GNU General Public License
++ *  along with this program; if not, write to the Free Software
++ *  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
++ */
++
++#include <linux/module.h>
++#include <linux/init.h>
++#include <linux/platform_device.h>
++#include <linux/slab.h>
++#include <linux/jiffies.h>
++#include <linux/i2c.h>
++#include <linux/err.h>
++#include <linux/sysfs.h>
++#include <linux/printk.h>
++#include <linux/pm_runtime.h>
++#include <linux/delay.h>
++#include <linux/gpio.h>
++#include <linux/mdio-gpio.h>
++#include <linux/netdevice.h>
++#include <net/dsa.h>
++
++#define VC_NAME "vc"
++#define VC_DSA "dsa"
++
++// gpio assignment;
++
++#define VC_GPIO_BASE 244
++#define VC_MDIO_INTR (VC_GPIO_BASE + 3)
++#define VC_MDC_CPU (VC_GPIO_BASE + 4)
++#define VC_MDIO_CPU (VC_GPIO_BASE + 5)
++#define VC_MDC_PHY (VC_GPIO_BASE + 6)
++#define VC_MDIO_PHY (VC_GPIO_BASE + 7)
++
++typedef struct vc_data vc_data_t;
++struct vc_data {
++	struct {
++		struct mdiobb_ctrl ctrl;
++		struct mii_bus *bus;
++		int irqs[PHY_MAX_ADDR];
++	} mdio;
++	struct net_device *ethdev;
++};
++
++static vc_data_t vc_data;
++static char *ifname = "eth0";
++
++// switch tree;
++
++static struct dsa_chip_data vc_switch = {
++	.sw_addr = 0,
++	.port_names = {
++		"sw%d",		// 0
++		"sw%d",		// 1
++		"sw%d",		// 2
++		"sw%d",		// 3
++		"cpu",		// 4
++	},
++};
++
++static struct dsa_platform_data vc_switch_data = {
++	.nr_chips = 1,
++	.chip = &vc_switch,
++};
++
++static struct platform_device vc_switch_dev = {
++	.name = VC_DSA,
++	.id = 0,
++	.num_resources = 0,
++	.dev.platform_data = &vc_switch_data,
++};
++
++// mdio driver;
++
++static void
++vc_mdio_dir(struct mdiobb_ctrl *ctrl, int dir)
++{
++	if(dir)
++		gpio_direction_output(VC_MDIO_CPU, 1);
++	else
++		gpio_direction_input(VC_MDIO_CPU);
++}
++
++static int
++vc_mdio_get(struct mdiobb_ctrl *ctrl)
++{
++	return(gpio_get_value(VC_MDIO_CPU) != 0);
++}
++
++static void
++vc_mdio_set(struct mdiobb_ctrl *ctrl, int what)
++{
++	gpio_set_value(VC_MDIO_CPU, what);
++}
++
++static void
++vc_mdc_set(struct mdiobb_ctrl *ctrl, int what)
++{
++	gpio_set_value(VC_MDC_CPU, what);
++}
++
++static struct mdiobb_ops vc_mdio_ops = {
++	.owner = THIS_MODULE,
++	.set_mdc = vc_mdc_set,
++	.set_mdio_dir = vc_mdio_dir,
++	.set_mdio_data = vc_mdio_set,
++	.get_mdio_data = vc_mdio_get,
++};
++
++// reset callback;
++// ve1000 doesn't have a reset for the marvell switch;
++
++static int
++vc_mdio_reset(struct mii_bus *bus)
++{
++	printk(KERN_INFO "vc: cannot reset switch\n"); //XXX
++	return(0);
++}
++
++// init mdio bus;
++
++static struct mii_bus *
++vc_mdio_init(struct device *dev)
++{
++	vc_data_t *vcd = &vc_data;
++	struct mii_bus *bus;
++	struct mdiobb_ctrl *ctrl;
++	int i;
++
++	ctrl = &vcd->mdio.ctrl;
++	ctrl->ops = &vc_mdio_ops;
++	ctrl->reset = vc_mdio_reset;
++	bus = alloc_mdio_bitbang(ctrl);
++	vcd->mdio.bus = bus;
++	if( !bus)
++		goto fail_alloc;
++
++	bus->name = "GPIO MDIO to MV88E6165";
++	bus->phy_mask = ~0;
++	bus->irq = vcd->mdio.irqs;
++	bus->parent = dev;
++
++	for(i = 0; i < PHY_MAX_ADDR; i++) {
++		if( !bus->irq[i])
++			bus->irq[i] = PHY_POLL;
++	}
++	snprintf(bus->id, MII_BUS_ID_SIZE, VC_NAME);
++
++	if(gpio_request(VC_MDC_CPU, "mdc-cpu"))
++		goto fail_mdc_cpu;
++	if (gpio_request(VC_MDIO_CPU, "mdio-cpu"))
++		goto fail_mdio_cpu;
++	if (gpio_request(VC_MDC_PHY, "mdc-phy"))
++		goto fail_mdc_phy;
++	if (gpio_request(VC_MDIO_PHY, "mdio-phy"))
++		goto fail_mdio_phy;
++
++	gpio_direction_output(VC_MDC_CPU, 0);
++	gpio_direction_input(VC_MDIO_CPU);
++	gpio_direction_input(VC_MDC_PHY);
++	gpio_direction_input(VC_MDIO_PHY);
++
++	return(bus);
++
++fail_mdio_phy:
++	gpio_free(VC_MDC_PHY);
++fail_mdc_phy:
++	gpio_free(VC_MDIO_CPU);
++fail_mdio_cpu:
++	gpio_free(VC_MDC_CPU);
++fail_mdc_cpu:
++	free_mdio_bitbang(bus);
++fail_alloc:
++	return(NULL);
++}
++
++// de-init mdio bus;
++
++static void
++vc_mdio_deinit(struct device *dev)
++{
++	gpio_free(VC_MDC_CPU);
++	gpio_free(VC_MDIO_CPU);
++	gpio_free(VC_MDC_PHY);
++	gpio_free(VC_MDIO_PHY);
++}
++
++static void
++vc_mdio_destroy(struct device *dev)
++{
++	struct mii_bus *bus = vc_data.mdio.bus;
++
++	mdiobus_unregister(bus);
++	vc_mdio_deinit(dev);
++}
++
++// platform driver init;
++
++static int __init
++vc_init(void)
++{
++	int err;
++	struct mii_bus *bus;
++	struct net_device *ethdev;
++
++	// create and register mdio bus on GPIOs;
++
++	bus = vc_mdio_init(NULL);
++	err = -ENODEV;
++	if( !bus)
++		goto fail_mdio_bus;
++
++	err = mdiobus_register(bus);
++	if(err < 0)
++		goto fail_mdio_reg;
++
++	// get associated netdev by name;
++
++	ethdev = dev_get_by_name(&init_net, ifname);
++	vc_data.ethdev = ethdev;
++	if( !ethdev)
++		goto fail_ethdev;
++
++	// register dsa switch;
++
++	vc_switch_data.netdev = &ethdev->dev;
++	vc_switch.mii_bus = &bus->dev;
++	err = platform_device_register(&vc_switch_dev);
++	if(err < 0)
++		goto fail_ethdev;
++
++	return(0);
++
++fail_ethdev:
++	mdiobus_unregister(bus);
++fail_mdio_reg:
++	vc_mdio_deinit(NULL);
++fail_mdio_bus:
++	return(err);
++}
++
++// platform driver exit;
++
++static void __exit
++vc_exit(void)
++{
++	struct net_device *ethdev;
++
++	ethdev = vc_data.ethdev;
++	if(ethdev)
++		dev_put(ethdev);
++	vc_mdio_destroy(NULL);
++	platform_device_unregister(&vc_switch_dev);
++}
++
++module_param(ifname,charp,S_IRUGO);
++module_init(vc_init);
++module_exit(vc_exit);
++
++MODULE_AUTHOR("Sandra Berndt <sberndt@velocloud.net>");
++MODULE_DESCRIPTION("Velocloud DSA Driver");
++MODULE_LICENSE("GPL");
++

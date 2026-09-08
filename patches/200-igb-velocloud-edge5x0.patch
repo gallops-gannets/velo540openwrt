@@ -1,0 +1,436 @@
+diff -Naur a/drivers/net/ethernet/intel/igb/Makefile b/drivers/net/ethernet/intel/igb/Makefile
+--- a/drivers/net/ethernet/intel/igb/Makefile	2026-09-08 01:13:22
++++ b/drivers/net/ethernet/intel/igb/Makefile	2026-09-08 01:13:22
+@@ -8,4 +8,4 @@
+ 
+ igb-y := igb_main.o igb_ethtool.o e1000_82575.o \
+ 	 e1000_mac.o e1000_nvm.o e1000_phy.o e1000_mbx.o \
+-	 e1000_i210.o igb_ptp.o igb_hwmon.o
++	 e1000_i210.o igb_ptp.o igb_hwmon.o igb_vc.o
+diff -Naur a/drivers/net/ethernet/intel/igb/e1000_82575.c b/drivers/net/ethernet/intel/igb/e1000_82575.c
+--- a/drivers/net/ethernet/intel/igb/e1000_82575.c	2026-09-08 01:13:22
++++ b/drivers/net/ethernet/intel/igb/e1000_82575.c	2026-09-08 01:13:22
+@@ -221,6 +221,12 @@
+ 		}
+ 	}
+ 
++	/* VeloCloud edge5x0: PHY lives on an external MDIO bus */
++	if (hw->dev_spec._82575.vc_ext_bus) {
++		phy->ops.read_reg = igb_vc_ext_read_reg;
++		phy->ops.write_reg = igb_vc_ext_write_reg;
++	}
++
+ 	/* set lan id */
+ 	hw->bus.func = FIELD_GET(E1000_STATUS_FUNC_MASK, rd32(E1000_STATUS));
+ 
+@@ -699,6 +705,12 @@
+ 		break;
+ 	}
+ 
++	/* VeloCloud edge5x0: switch-facing and external-MDIO functions */
++	ret_val = igb_vc_probe(hw, dev_spec->sgmii_active,
++			       igb_sgmii_uses_mdio_82575(hw));
++	if (ret_val)
++		goto out;
++
+ 	/* setup PHY parameters */
+ 	ret_val = igb_init_phy_params_82575(hw);
+ 
+@@ -838,6 +850,12 @@
+ 	 */
+ 	if (!(igb_sgmii_active_82575(hw))) {
+ 		phy->addr = 1;
++		ret_val = igb_get_phy_id(hw);
++		goto out;
++	}
++
++	/* VeloCloud edge5x0: phy->addr was set by igb_vc_probe() */
++	if (hw->dev_spec._82575.vc_ext_bus) {
+ 		ret_val = igb_get_phy_id(hw);
+ 		goto out;
+ 	}
+diff -Naur a/drivers/net/ethernet/intel/igb/e1000_82575.h b/drivers/net/ethernet/intel/igb/e1000_82575.h
+--- a/drivers/net/ethernet/intel/igb/e1000_82575.h	2026-09-08 01:13:22
++++ b/drivers/net/ethernet/intel/igb/e1000_82575.h	2026-09-08 01:13:22
+@@ -6,6 +6,11 @@
+ 
+ void igb_shutdown_serdes_link_82575(struct e1000_hw *hw);
+ void igb_power_up_serdes_link_82575(struct e1000_hw *hw);
++
++/* igb_vc.c: VeloCloud edge5x0 glue */
++s32 igb_vc_probe(struct e1000_hw *hw, bool sgmii_active, bool sgmii_mdio);
++s32 igb_vc_ext_read_reg(struct e1000_hw *hw, u32 offset, u16 *data);
++s32 igb_vc_ext_write_reg(struct e1000_hw *hw, u32 offset, u16 data);
+ void igb_power_down_phy_copper_82575(struct e1000_hw *hw);
+ void igb_rx_fifo_flush_82575(struct e1000_hw *hw);
+ s32 igb_read_i2c_byte(struct e1000_hw *hw, u8 byte_offset, u8 dev_addr,
+diff -Naur a/drivers/net/ethernet/intel/igb/e1000_hw.h b/drivers/net/ethernet/intel/igb/e1000_hw.h
+--- a/drivers/net/ethernet/intel/igb/e1000_hw.h	2026-09-08 01:13:22
++++ b/drivers/net/ethernet/intel/igb/e1000_hw.h	2026-09-08 01:13:22
+@@ -13,6 +13,7 @@
+ #include "e1000_defines.h"
+ 
+ struct e1000_hw;
++struct mii_bus;
+ 
+ #define E1000_DEV_ID_82576			0x10C9
+ #define E1000_DEV_ID_82576_FIBER		0x10E6
+@@ -512,6 +513,14 @@
+ 	u8 media_port;
+ 	bool media_changed;
+ 	bool mas_capable;
++
++	/* VeloCloud edge5x0 platform glue, see igb_vc.c */
++#define IGB_VC_ROLE_NONE	0
++#define IGB_VC_ROLE_SWITCH	1	/* SerDes to 88E6176, no PHY */
++#define IGB_VC_ROLE_EXTPHY	2	/* 88E1514 on an external MDIO bus */
++	u8 vc_role;
++	struct mii_bus *vc_mii;		/* I354 MDIO master exported as mii_bus */
++	struct mii_bus *vc_ext_bus;	/* external bus carrying this port's PHY */
+ };
+ 
+ struct e1000_hw {
+diff -Naur a/drivers/net/ethernet/intel/igb/igb.h b/drivers/net/ethernet/intel/igb/igb.h
+--- a/drivers/net/ethernet/intel/igb/igb.h	2026-09-08 01:13:22
++++ b/drivers/net/ethernet/intel/igb/igb.h	2026-09-08 01:13:22
+@@ -719,6 +719,8 @@
+ 		      struct igb_ring *ring,
+ 		      struct xdp_frame *xdpf);
+ int igb_open(struct net_device *netdev);
++int igb_vc_mii_register(struct igb_adapter *adapter);
++void igb_vc_mii_unregister(struct igb_adapter *adapter);
+ int igb_close(struct net_device *netdev);
+ int igb_up(struct igb_adapter *);
+ void igb_down(struct igb_adapter *);
+diff -Naur a/drivers/net/ethernet/intel/igb/igb_main.c b/drivers/net/ethernet/intel/igb/igb_main.c
+--- a/drivers/net/ethernet/intel/igb/igb_main.c	2026-09-08 01:13:22
++++ b/drivers/net/ethernet/intel/igb/igb_main.c	2026-09-08 01:13:22
+@@ -3515,6 +3515,9 @@
+ 	if (err)
+ 		goto err_register;
+ 
++	/* VeloCloud edge5x0: export the switch MDIO bus (no-op elsewhere) */
++	igb_vc_mii_register(adapter);
++
+ 	/* carrier off reporting is important to ethtool even BEFORE open */
+ 	netif_carrier_off(netdev);
+ 
+@@ -3884,6 +3887,7 @@
+ 	igb_disable_sriov(pdev, false);
+ #endif
+ 
++	igb_vc_mii_unregister(adapter);
+ 	unregister_netdev(netdev);
+ 
+ 	igb_clear_interrupt_scheme(adapter);
+diff -Naur a/drivers/net/ethernet/intel/igb/igb_vc.c b/drivers/net/ethernet/intel/igb/igb_vc.c
+--- a/drivers/net/ethernet/intel/igb/igb_vc.c	1969-12-31 18:00:00
++++ b/drivers/net/ethernet/intel/igb/igb_vc.c	2026-09-08 01:13:22
+@@ -0,0 +1,307 @@
++// SPDX-License-Identifier: GPL-2.0
++/* VeloCloud Edge 520/540 ("edge5x0") platform glue for igb.
++ *
++ * Derived from VeloCloud's GPL igb_vc.c (Copyright (c) 2014 Velocloud Inc.),
++ * reduced to what stock igb on a modern kernel cannot do by itself.
++ *
++ * On these boards the four Intel I354 SGMII functions (8086:1f41) are
++ * wired as follows (from the vendor driver, igb_vc5x0_info[]):
++ *
++ *   func 0  SGMII -> Marvell 88E6176 switch "A", switch port 4 (SerDes).
++ *           The switch's SMI/MDIO is on this function's own MDIO pins,
++ *           single-chip addressing (switch registers at MDIO addr 0x10..0x1d).
++ *   func 1  same, switch "B".
++ *   func 2  SGMII -> Marvell 88E1514 PHY (WAN0, RJ45).  The PHY's MDIO is
++ *           NOT on the I354; it is on a GPIO bit-bang bus, PHY addr 0.
++ *   func 3  same, WAN1, PHY addr 1.
++ *
++ * The board is identified by NVM customer words 0x06/0x07 = "Vc" / "5X".
++ * Stock igb fails on all four with -E1000_ERR_PHY (-2) because it cannot
++ * find a PHY it knows on the I354's own MDIO bus.
++ *
++ * What this file does:
++ *   funcs 0/1: treat the link as internal SerDes with a forced 1000/full
++ *              SGMII PCS link (no PHY), and export the I354 MDIO master as a
++ *              regular mii_bus so mv88e6xxx (via platform data) or userspace
++ *              (mdio-tools) can drive the switch.
++ *   funcs 2/3: route igb's PHY register accesses to an external mii_bus
++ *              (the GPIO bit-bang bus, registered separately by mdio-gpio);
++ *              mainline igb already knows the 88E1512/88E1514 (0x01410dd0).
++ *
++ * UNTESTED DRAFT against v6.12 igb - written from the vendor source and the
++ * mainline code paths, not compiled or run on hardware yet.
++ */
++
++#include <linux/module.h>
++#include <linux/pci.h>
++#include <linux/phy.h>
++#include <linux/bitfield.h>
++#include <linux/delay.h>
++
++#include "e1000_mac.h"
++#include "e1000_82575.h"
++#include "e1000_hw.h"
++#include "igb.h"
++
++#define IGB_VC_NVM_WORD		0x06
++#define IGB_VC_ID		0x5663	/* "Vc" */
++#define IGB_VC_ID_EDGE5X0	0x3558	/* "5X" edge520/edge540 */
++
++/* mii_bus id of the external bit-bang bus carrying the 88E1514 WAN PHYs.
++ * mdio-gpio names its bus "gpio-<pdev id in hex>".
++ */
++static char *vc_ext_mdio = "gpio-0";
++module_param(vc_ext_mdio, charp, 0444);
++MODULE_PARM_DESC(vc_ext_mdio,
++		 "VeloCloud edge5x0: id of the external MDIO bus with the 88E1514 WAN PHYs");
++
++static u16 igb_vc_swfw_mask(struct e1000_hw *hw)
++{
++	switch (hw->bus.func) {
++	case E1000_FUNC_1:
++		return E1000_SWFW_PHY1_SM;
++	case E1000_FUNC_2:
++		return E1000_SWFW_PHY2_SM;
++	case E1000_FUNC_3:
++		return E1000_SWFW_PHY3_SM;
++	default:
++		return E1000_SWFW_PHY0_SM;
++	}
++}
++
++/* One MDIO transaction on the I354's own MDIO master, with an explicit
++ * PHY address (the switch uses single-chip addressing, so every register
++ * bank is a different "PHY" address).  Mirrors the vendor's
++ * igb_vc_mdio_read()/write(): the address goes into MDICNFG.PHYADD on
++ * 82580-class parts; we also put it in MDIC.PHYADD like igb_read_phy_reg_mdic().
++ */
++static int igb_vc_mdic(struct e1000_hw *hw, int addr, int reg, bool write,
++		       u16 *val)
++{
++	u32 mdic;
++	int i;
++
++	if (addr < 0 || addr > 0x1f || reg < 0 || reg > MAX_PHY_REG_ADDRESS)
++		return -EINVAL;
++
++	mdic = rd32(E1000_MDICNFG);
++	mdic &= (E1000_MDICNFG_EXT_MDIO | E1000_MDICNFG_COM_MDIO);
++	mdic |= (u32)addr << E1000_MDICNFG_PHY_SHIFT;
++	wr32(E1000_MDICNFG, mdic);
++
++	mdic = ((u32)reg << E1000_MDIC_REG_SHIFT) |
++	       ((u32)addr << E1000_MDIC_PHY_SHIFT);
++	if (write)
++		mdic |= E1000_MDIC_OP_WRITE | *val;
++	else
++		mdic |= E1000_MDIC_OP_READ;
++	wr32(E1000_MDIC, mdic);
++
++	for (i = 0; i < E1000_GEN_POLL_TIMEOUT * 3; i++) {
++		udelay(50);
++		mdic = rd32(E1000_MDIC);
++		if (mdic & E1000_MDIC_READY)
++			break;
++	}
++	if (!(mdic & E1000_MDIC_READY))
++		return -ETIMEDOUT;
++	if (mdic & E1000_MDIC_ERROR)
++		return -EIO;
++	if (!write)
++		*val = (u16)mdic;
++	return 0;
++}
++
++static int igb_vc_mii_read(struct mii_bus *bus, int addr, int reg)
++{
++	struct e1000_hw *hw = bus->priv;
++	u16 val = 0;
++	int ret;
++
++	ret = hw->mac.ops.acquire_swfw_sync(hw, igb_vc_swfw_mask(hw));
++	if (ret)
++		return ret;
++	ret = igb_vc_mdic(hw, addr, reg, false, &val);
++	hw->mac.ops.release_swfw_sync(hw, igb_vc_swfw_mask(hw));
++
++	return ret ? ret : val;
++}
++
++static int igb_vc_mii_write(struct mii_bus *bus, int addr, int reg, u16 val)
++{
++	struct e1000_hw *hw = bus->priv;
++	int ret;
++
++	ret = hw->mac.ops.acquire_swfw_sync(hw, igb_vc_swfw_mask(hw));
++	if (ret)
++		return ret;
++	ret = igb_vc_mdic(hw, addr, reg, true, &val);
++	hw->mac.ops.release_swfw_sync(hw, igb_vc_swfw_mask(hw));
++
++	return ret;
++}
++
++/* PHY register access for funcs 2/3 via the external bit-bang bus. */
++s32 igb_vc_ext_read_reg(struct e1000_hw *hw, u32 offset, u16 *data)
++{
++	struct mii_bus *bus = hw->dev_spec._82575.vc_ext_bus;
++	int ret;
++
++	if (!bus || offset > MAX_PHY_REG_ADDRESS)
++		return -E1000_ERR_PARAM;
++
++	ret = mdiobus_read(bus, hw->phy.addr, offset);
++	if (ret < 0)
++		return -E1000_ERR_PHY;
++	*data = ret;
++	return 0;
++}
++
++s32 igb_vc_ext_write_reg(struct e1000_hw *hw, u32 offset, u16 data)
++{
++	struct mii_bus *bus = hw->dev_spec._82575.vc_ext_bus;
++
++	if (!bus || offset > MAX_PHY_REG_ADDRESS)
++		return -E1000_ERR_PARAM;
++
++	return mdiobus_write(bus, hw->phy.addr, offset, data) ? -E1000_ERR_PHY : 0;
++}
++
++/* Switch-facing functions: the far end is the 88E6176's port-4 SerDes.
++ * The vendor driver forces the I354 side to 1000/full with PCS autoneg
++ * off (igb_vc_setup_sgmii_link_forced) and forces the switch side to
++ * match; mainline igb_setup_serdes_link_82575() would instead run SGMII
++ * autoneg, which has no PHY-side partner here.
++ */
++static s32 igb_vc_setup_serdes_forced(struct e1000_hw *hw)
++{
++	u32 reg;
++
++	wr32(E1000_SCTL, E1000_SCTL_DISABLE_SERDES_LOOPBACK);
++
++	reg = rd32(E1000_PCS_CFG0);
++	reg |= E1000_PCS_CFG_PCS_EN;
++	wr32(E1000_PCS_CFG0, reg);
++
++	/* SLU must be set for the SerDes to come up; force 1000/full */
++	reg = rd32(E1000_CTRL);
++	reg |= E1000_CTRL_SLU | E1000_CTRL_SPD_1000 | E1000_CTRL_FD |
++	       E1000_CTRL_FRCSPD | E1000_CTRL_FRCDPX;
++	wr32(E1000_CTRL, reg);
++
++	reg = rd32(E1000_PCS_LCTL);
++	reg &= ~(E1000_PCS_LCTL_AN_ENABLE | E1000_PCS_LCTL_AN_RESTART |
++		 E1000_PCS_LCTL_AN_TIMEOUT);
++	reg |= E1000_PCS_LCTL_FLV_LINK_UP | E1000_PCS_LCTL_FSV_1000 |
++	       E1000_PCS_LCTL_FDV_FULL | E1000_PCS_LCTL_FSD |
++	       E1000_PCS_LCTL_FORCE_FCTRL | E1000_PCS_LCTL_FORCE_LINK;
++	wr32(E1000_PCS_LCTL, reg);
++
++	return 0;
++}
++
++/* Called from igb_get_invariants_82575() after MAC/NVM params are set up
++ * and before igb_init_phy_params_82575().  Returns 0 to continue with the
++ * stock PHY probing (non-VeloCloud hardware), or -EPROBE_DEFER when the
++ * external MDIO bus is not registered yet.
++ */
++s32 igb_vc_probe(struct e1000_hw *hw, bool sgmii_active, bool sgmii_mdio)
++{
++	struct e1000_dev_spec_82575 *dev_spec = &hw->dev_spec._82575;
++	struct igb_adapter *adapter = hw->back;
++	struct device *dev = &adapter->pdev->dev;
++	struct mii_bus *bus;
++	u16 nvm[2] = { 0, 0 };
++	u8 func;
++
++	if (hw->mac.type != e1000_i354 || !sgmii_active || !sgmii_mdio)
++		return 0;
++
++	if (hw->nvm.ops.read(hw, IGB_VC_NVM_WORD, 2, nvm))
++		return 0;
++	if (nvm[0] != IGB_VC_ID || nvm[1] != IGB_VC_ID_EDGE5X0)
++		return 0;
++
++	func = FIELD_GET(E1000_STATUS_FUNC_MASK, rd32(E1000_STATUS));
++	hw->bus.func = func;
++	dev_info(dev, "found custom link: 0x%x (VeloCloud edge5x0, func %u)\n",
++		 nvm[1], func);
++
++	switch (func) {
++	case 0:
++	case 1:
++		/* 88E6176 switch A/B behind SerDes: no PHY, forced link */
++		dev_spec->vc_role = IGB_VC_ROLE_SWITCH;
++		hw->phy.media_type = e1000_media_type_internal_serdes;
++		hw->mac.autoneg = false;
++		hw->mac.ops.setup_physical_interface = igb_vc_setup_serdes_forced;
++		return 0;
++	case 2:
++	case 3:
++		/* 88E1514 WAN PHY on the external bit-bang bus */
++		bus = mdio_find_bus(vc_ext_mdio);
++		if (!bus) {
++			dev_info(dev, "external MDIO bus '%s' not registered yet, deferring probe\n",
++				 vc_ext_mdio);
++			return -EPROBE_DEFER;
++		}
++		dev_spec->vc_role = IGB_VC_ROLE_EXTPHY;
++		dev_spec->vc_ext_bus = bus;
++		hw->phy.addr = func - 2;
++		return 0;
++	default:
++		return 0;
++	}
++}
++
++/* Called from igb_probe() after register_netdev(). */
++int igb_vc_mii_register(struct igb_adapter *adapter)
++{
++	struct e1000_hw *hw = &adapter->hw;
++	struct e1000_dev_spec_82575 *dev_spec = &hw->dev_spec._82575;
++	struct mii_bus *bus;
++	int err;
++
++	if (dev_spec->vc_role != IGB_VC_ROLE_SWITCH)
++		return 0;
++
++	bus = mdiobus_alloc();
++	if (!bus)
++		return -ENOMEM;
++
++	bus->name = "igb-vc-smi";
++	snprintf(bus->id, MII_BUS_ID_SIZE, "igb-vc-%s", pci_name(adapter->pdev));
++	bus->parent = &adapter->pdev->dev;
++	bus->priv = hw;
++	bus->read = igb_vc_mii_read;
++	bus->write = igb_vc_mii_write;
++	/* single-chip addressing: 0x10..0x1d are switch register banks,
++	 * not PHYs -- never let phylib scan this bus.
++	 */
++	bus->phy_mask = ~0U;
++
++	err = mdiobus_register(bus);
++	if (err) {
++		dev_err(&adapter->pdev->dev, "failed to register switch MDIO bus: %d\n", err);
++		mdiobus_free(bus);
++		return err;
++	}
++	dev_spec->vc_mii = bus;
++	dev_info(&adapter->pdev->dev, "switch MDIO bus registered as %s\n", bus->id);
++	return 0;
++}
++
++void igb_vc_mii_unregister(struct igb_adapter *adapter)
++{
++	struct e1000_dev_spec_82575 *dev_spec = &adapter->hw.dev_spec._82575;
++
++	if (dev_spec->vc_mii) {
++		mdiobus_unregister(dev_spec->vc_mii);
++		mdiobus_free(dev_spec->vc_mii);
++		dev_spec->vc_mii = NULL;
++	}
++	if (dev_spec->vc_ext_bus) {
++		put_device(&dev_spec->vc_ext_bus->dev);	/* ref from mdio_find_bus() */
++		dev_spec->vc_ext_bus = NULL;
++	}
++}

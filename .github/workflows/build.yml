@@ -1,0 +1,34 @@
+name: build
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: deps
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q build-essential libncurses-dev zlib1g-dev gawk gettext libssl-dev \
+            xsltproc rsync wget unzip python3 file zstd libelf-dev bc flex bison kmod
+      - name: build
+        id: build
+        run: |
+          mkdir -p out
+          set -o pipefail
+          ./scripts/build.sh 2>&1 | tee out/build.log
+      - name: release
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="build-${{ github.run_number }}"
+          status="${{ steps.build.outcome }}"
+          ls -la out || true
+          gh release create "$tag" --title "$tag ($status) ${{ github.sha }}" \
+            --notes "Automated build of $GITHUB_SHA, status: $status. Untested draft - see README." \
+            out/* || gh release upload "$tag" out/* --clobber

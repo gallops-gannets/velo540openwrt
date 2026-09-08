@@ -1,0 +1,58 @@
+--- a/drivers/usb/host/xhci.h
++++ b/drivers/usb/host/xhci.h
+@@ -1560,6 +1560,7 @@
+ #define XHCI_PLAT		(1 << 16)
+ #define XHCI_SLOW_SUSPEND	(1 << 17)
+ #define XHCI_SPURIOUS_WAKEUP	(1 << 18)
++#define XHCI_FORCE_HCRST_NOTH	(1 << 31)
+ 	unsigned int		num_active_eps;
+ 	unsigned int		limit_active_eps;
+ 	/* There are two roothubs to keep track of bus suspend info for */
+--- a/drivers/usb/host/xhci.c
++++ b/drivers/usb/host/xhci.c
+@@ -152,6 +152,23 @@
+ 	return ret;
+ }
+ 
++// force xhci reset;
++
++int
++xhci_hreset(struct xhci_hcd *xhci)
++{
++	u32 command;
++	int ret;
++
++	command = readl(&xhci->op_regs->command);
++	command |= CMD_RESET;
++	writel(command, &xhci->op_regs->command);
++
++	ret = xhci_handshake(xhci, &xhci->op_regs->command,
++			CMD_RESET, 0, 10 * 1000 * 1000);
++	return(ret);
++}
++
+ /*
+  * Reset a halted HC.
+  *
+@@ -4830,6 +4847,10 @@
+ 
+ 	/* Make sure the HC is halted. */
+ 	retval = xhci_halt(xhci);
++	if(retval && (xhci->quirks & XHCI_FORCE_HCRST_NOTH)) {
++		xhci_dbg(xhci, "HCD not halted, forcing HCRST\n");
++		retval = xhci_hreset(xhci);
++	}
+ 	if (retval)
+ 		goto error;
+ 
+--- a/drivers/usb/host/xhci-pci.c
++++ b/drivers/usb/host/xhci-pci.c
+@@ -154,6 +154,8 @@
+ 		xhci->quirks |= XHCI_RESET_ON_RESUME;
+ 	if (pdev->vendor == PCI_VENDOR_ID_VIA)
+ 		xhci->quirks |= XHCI_RESET_ON_RESUME;
++	if (pdev->vendor == PCI_VENDOR_ID_TI && pdev->device == 0x8241)
++		xhci->quirks |= XHCI_FORCE_HCRST_NOTH;
+ }
+ 
+ /* called during probe() after chip reset completes */

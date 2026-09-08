@@ -1,0 +1,376 @@
+diff -Naur a/drivers/net/ethernet/intel/igb/e1000_defines.h b/drivers/net/ethernet/intel/igb/e1000_defines.h
+--- a/drivers/net/ethernet/intel/igb/e1000_defines.h	2017-07-26 12:25:44.281323457 -0700
++++ b/drivers/net/ethernet/intel/igb/e1000_defines.h	2017-07-26 12:36:46.957601413 -0700
+@@ -669,6 +669,11 @@
+ #define E1000_NVM_RW_ADDR_SHIFT 2    /* Shift to the address bits */
+ #define E1000_NVM_POLL_READ     0    /* Flag for polling for read complete */
+ 
++#define NVM_LAN_PORT_0_BAR	0x000 /* Word offset into EEPROM for LAN Port 0 config. */
++#define NVM_LAN_PORT_1_BAR	0x080 /* Word offset into EEPROM for LAN Port 1 config. */
++#define NVM_LAN_PORT_2_BAR	0x0C0 /* Word offset into EEPROM for LAN Port 2 config. */
++#define NVM_LAN_PORT_3_BAR	0x100 /* Word offset into EEPROM for LAN Port 3 config. */
++
+ /* NVM Word Offsets */
+ #define NVM_COMPAT                 0x0003
+ #define NVM_ID_LED_SETTINGS        0x0004 /* SERDES output amplitude */
+diff -Naur a/drivers/net/ethernet/intel/igb/igb_vc.c b/drivers/net/ethernet/intel/igb/igb_vc.c
+--- a/drivers/net/ethernet/intel/igb/igb_vc.c	2017-07-26 12:25:44.281323457 -0700
++++ b/drivers/net/ethernet/intel/igb/igb_vc.c	2017-07-26 12:37:29.735553996 -0700
+@@ -35,6 +35,7 @@
+ #include <linux/platform_device.h>
+ #include <net/dsa.h>
+ 
++//#define IGB_VC_DEBUG
+ #undef IGB_VC_DEBUG
+ #ifdef IGB_VC_DEBUG
+ #define vcdbg(fmt, ...) printk("%s/%d " fmt, __func__, hw->bus.func, ##__VA_ARGS__);
+@@ -128,6 +129,7 @@
+ #define M88_SW_GLOBAL2 0x1c		// global2 regs;
+ #define M88_SW_GLOBAL3 0x1d		// global3 regs;
+ 
++#define M88_SW_GL1_GSTA 0
+ #define M88_SW_GL1_CTRL 4
+ #define M88_SW_GL1_CTRL_SWRESET 0x8000
+ 
+@@ -157,8 +159,6 @@
+ 
+ #define M88E1000_SPEC_CTRL_SIGDET (1 << 9)
+ 
+-// mac special control;
+-
+ #define M88E1000_SPEC_CTRL_PREFER			(3 << 10)
+ #define M88E1000_SPEC_CTRL_PREFER_NONE			(0 << 10)
+ #define M88E1000_SPEC_CTRL_PREFER_FIBER			(1 << 10)
+@@ -909,8 +909,6 @@
+ 
+ #endif
+ 
+-#if 0
+-
+ // software reset entire marvell switch;
+ // XXX it doesn't really put the switch back into full hw reset;
+ 
+@@ -935,7 +933,36 @@
+ 	return(ret);
+ }
+ 
+-#endif
++static s32
++igb_vc_m88sw_initready(struct e1000_hw *hw)
++{
++	s32 ret;
++	u16 sw_ctrl;
++	unsigned long timeo = jiffies + (HZ*30);
++
++	vcdbg("%d\n", hw->bus.func);
++
++	do {
++		ret = igb_vc_mdio_read(hw,
++			M88_SW_REG(M88_SW_GLOBAL1, M88_SW_GL1_GSTA),
++			&sw_ctrl);
++		if(ret)
++			break;
++	
++		udelay(1);
++
++		if (time_after(jiffies, timeo))
++			break;
++
++		vcdbg("waiting for initready\n");
++
++	} while ((sw_ctrl & (1 << 11)) == 0);
++
++	return(ret);
++}
++
++
++
+ 
+ // extra info for edge500;
+ 
+@@ -1053,7 +1080,7 @@
+ 	if(gpio >= 0) {
+ 		vcdbg("resetting func %d sw/phy\n", hw->bus.func);
+ 		gpio_set_value(gpio, 0);
+-		usleep_range(100, 1000);
++		mdelay(100);
+ 		gpio_set_value(gpio, 1);
+ 	}
+ 	return(0);
+@@ -2136,9 +2163,8 @@
+ 	struct e1000_mac_info *mac = &hw->mac;
+ 	struct e1000_phy_info *phy = &hw->phy;
+ 	struct igb_vc_info *info = NULL;
+-	u32 mdic;
+ 	s32 ret = -E1000_ERR_PHY;
+-	u16 eeprom[2];
++	u16 eeprom_offset, eeprom[2];
+ 
+ 	// only bother about Rangeley MACs;
+ 	// only support is for SGMII attached with MDIO;
+@@ -2169,10 +2195,14 @@
+ 	case VC_ID_EDGE5X0:
+ 		hw->vc_id = e1000_vc5x0;
+ 		info = igb_vc5x0_info;
+-		if (! vc_5x0_igb_inmem_reset[hw->bus.func]) {
++
++		if (hw->bus.func < E1000_FUNC_2)
++			igb_vc5x0_reset(hw);
++		else if (! vc_5x0_igb_inmem_reset[hw->bus.func]) {
+ 			igb_vc5x0_reset(hw);
+ 			vc_5x0_igb_inmem_reset[hw->bus.func] = 1;
+ 		}
++
+ 		break;
+ 	case VC_ID_EDGE510:
+ 		ret = igb_init_phy_params_82575(hw);
+@@ -2183,19 +2213,41 @@
+ 	BUG_ON(info == NULL);
+ 	dev_info(&adapter->pdev->dev, "found custom link: 0x%x\n", eeprom[1]);
+ 
+-	// init port info;
+-
+ 	info += hw->bus.func;
+ 	phy->ports[e1000_port_cpu] = info->ports[e1000_port_cpu];
+ 	phy->ports[e1000_port_sgmii] = info->ports[e1000_port_sgmii];
+ 	phy->ports[e1000_port_phy] = info->ports[e1000_port_phy];
+ 
+-	// get PHY address from MDICNFG;
+-	// this assumes the EEPROM has valid config data;
++	// get PHY address from EEPROM;
++	// i354 reset does not re-read from EEPROM and caches
++	// last value written before reset.  Always read from EEPROM
++	// during device init; XXX Fixme: Investigate bit to make it possible
++	// to read from EEPROM on soft reset.
++	switch (hw->bus.func) {
+ 
+-	mdic = rd32(E1000_MDICNFG);
+-	mdic &= E1000_MDICNFG_PHY_MASK;
+-	phy->addr = mdic >> E1000_MDICNFG_PHY_SHIFT;
++	case E1000_FUNC_0:
++		eeprom_offset = NVM_LAN_PORT_0_BAR + NVM_INIT_CTRL_4;
++		break;
++	case E1000_FUNC_1:
++		eeprom_offset = NVM_LAN_PORT_1_BAR + NVM_INIT_CTRL_4;
++		break;
++	case E1000_FUNC_2:
++		eeprom_offset = NVM_LAN_PORT_2_BAR + NVM_INIT_CTRL_4;
++		break;
++	case E1000_FUNC_3:
++		eeprom_offset = NVM_LAN_PORT_3_BAR + NVM_INIT_CTRL_4;
++		break;
++	default:
++		goto out;
++	}
++	ret = hw->nvm.ops.read(hw, eeprom_offset, 1, eeprom);
++	if (ret > 0) {
++		dev_err(&adapter->pdev->dev, 
++			"error reading offset: 0x%x into EEPROM\n", eeprom_offset);
++		goto out;
++	}
++	/* bits 1:5 contain addr at offset 0x13. */
++	phy->addr = (eeprom[0] >> 1) & 0x1f;
+ 
+ 	// assign alternate MDIO read/write functions;
+ 	// needed for bitbang MDIO on edge5x0;
+@@ -2208,7 +2260,6 @@
+ 		phy->ops.write_reg = info->write_reg;
+ 
+ 	// get the switch/PHY IDs;
+-
+ 	ret = info->getid(hw);
+ 	vcdbg("id 0x%x rev 0x%x ret %d\n", phy->id, phy->revision, ret);
+ 	if(ret)
+@@ -2594,8 +2645,6 @@
+ 	return(ret);
+ }
+ 
+-// set MAC address;
+-
+ static int
+ m88e6176_set_addr(struct dsa_switch *ds, u8 *addr)
+ {
+@@ -2604,15 +2653,17 @@
+ 
+ 	for(i = 0; i < 6; i++) {
+ 		ret = m88e6176_reg_write(ds, REG_GLOBAL2, 0x0d, 0x8000 | (i << 8) | addr[i]);
+-		if(ret)
++		if(ret) {
+ 			return(ret);
++		}
+ 
+ 		// wait for write to complete;
+ 		for(j = 0; j < 16; j++) {
+ 			ret = m88e6176_reg_read(ds, REG_GLOBAL2, 0x0d);
+-			if(ret < 0)
++			if(ret < 0) {
+ 				return(ret);
+-			if((ret & 0x8000) == 0)
++			}
++			if ((ret & 0x8000) == 0)
+ 				break;
+ 		}
+ 		if(j == 16)
+@@ -2907,6 +2958,9 @@
+ m88e6176_switch_reset(struct dsa_switch *ds)
+ {
+ 	int i, ret;
++	struct mii_bus *bus = ds->master_mii_bus;
++	struct vc_dsa_priv *priv = bus->priv;
++	struct e1000_hw *hw = priv->hw;
+ 
+ 	// set all ports to disabled state;
+ 	// reg 0x4 switch reset doesn't really hw reset the switch;
+@@ -2918,8 +2972,11 @@
+ 	}
+ 
+ 	// wait for tx queues to drain;
++	mdelay(40);
++
++	igb_vc_m88sw_reset(hw);
+ 
+-	usleep_range(2000, 4000);
++	igb_vc_m88sw_initready(hw);	
+ 
+ 	return(0);
+ }
+@@ -3538,6 +3595,12 @@
+ }
+ 
+ // free dsa interface;
++void igb_vc_release(struct device *dev)
++{
++	/* Stub function to quiet stacktrace warning. */
++	return;
++}
++
+ 
+ void
+ igb_vc_dsa_exit(struct igb_adapter *adapter)
+@@ -3550,6 +3613,7 @@
+ 
+ 	priv = bus->priv;
+ 
++	priv->pdev.dev.release = igb_vc_release;
+ 	platform_device_unregister(&priv->pdev);
+ 
+ 	mdiobus_unregister(bus);
+@@ -3573,4 +3637,3 @@
+ 	if(dsa & DSA_ENABLE)
+ 		unregister_switch_driver(&m88e6176_switch_driver);
+ }
+-
+diff -Naur a/drivers/platform/x86/velocloud-vc.c b/drivers/platform/x86/velocloud-vc.c
+--- a/drivers/platform/x86/velocloud-vc.c	2017-07-26 12:25:44.977290135 -0700
++++ b/drivers/platform/x86/velocloud-vc.c	2017-07-26 12:34:56.454890539 -0700
+@@ -4509,6 +4509,11 @@
+ extern int vc_bbfw;
+ 
+ // platform driver init;
++void vc_dev_release(struct device *dev)
++{
++	/* Stub function to quiet warning. */
++	return;
++}
+ 
+ static int __init
+ vc_init(void)
+@@ -4641,7 +4646,7 @@
+ 			goto fail_unreg;
+ 		}
+ 	}
+-
++	vc_pdev->dev.release = vc_dev_release;
+ 	// board will not show up unless all above succeeded;
+ 	// create velocloud board id;
+ 	// all below may fail, but still print log messages;
+diff -Naur a/net/dsa/dsa.c b/net/dsa/dsa.c
+--- a/net/dsa/dsa.c	2017-07-26 12:25:42.209422679 -0700
++++ b/net/dsa/dsa.c	2017-07-26 12:45:13.605353729 -0700
+@@ -182,7 +182,7 @@
+ 		goto out;
+ 
+ 	ds->slave_mii_bus = mdiobus_alloc();
+-	if (ds->slave_mii_bus == NULL) {
++	if (ds->slave_mii_bus == NULL) { 
+ 		ret = -ENOMEM;
+ 		goto out;
+ 	}
+@@ -224,6 +224,11 @@
+ 
+ static void dsa_switch_destroy(struct dsa_switch *ds)
+ {
++	int i;
++	for (i = 0; i < DSA_MAX_PORTS; i++)
++		dsa_slave_destroy(ds->ports[i]);
++
++	mdiobus_unregister(ds->slave_mii_bus);
+ }
+ 
+ 
+@@ -601,6 +606,8 @@
+ static int dsa_remove(struct platform_device *pdev)
+ {
+ 	struct dsa_switch_tree *dst = platform_get_drvdata(pdev);
++	struct dsa_platform_data *pd = pdev->dev.platform_data;
++	struct net_device *nd;
+ 	int i;
+ 
+ 	if (dst->link_poll_needed)
+@@ -617,12 +624,13 @@
+ 
+ 	dsa_of_remove(pdev);
+ 
++	nd = to_net_dev(pd->netdev);
++	dev_put(nd);
++
+ 	return 0;
+ }
+ 
+-static void dsa_shutdown(struct platform_device *pdev)
+-{
+-}
++static void dsa_shutdown(struct platform_device *pdev) { }
+ 
+ static const struct of_device_id dsa_of_match_table[] = {
+ 	{ .compatible = "marvell,dsa", },
+diff -Naur a/net/dsa/dsa_priv.h b/net/dsa/dsa_priv.h
+--- a/net/dsa/dsa_priv.h	2017-07-26 12:25:42.209422679 -0700
++++ b/net/dsa/dsa_priv.h	2017-07-26 12:34:56.462890143 -0700
+@@ -40,6 +40,9 @@
+ 
+ /* slave.c */
+ void dsa_slave_mii_bus_init(struct dsa_switch *ds);
++
++void dsa_slave_destroy(struct net_device *slave_dev);
++
+ struct net_device *dsa_slave_create(struct dsa_switch *ds,
+ 				    struct device *parent,
+ 				    int port, char *name);
+diff -Naur a/net/dsa/slave.c b/net/dsa/slave.c
+--- a/net/dsa/slave.c	2017-07-26 12:25:42.209422679 -0700
++++ b/net/dsa/slave.c	2017-07-26 12:34:56.462890143 -0700
+@@ -337,6 +337,23 @@
+ };
+ #endif
+ 
++void dsa_slave_destroy(struct net_device *slave_dev)
++{
++	struct dsa_slave_priv *p;
++
++	if (slave_dev == NULL)
++		return;
++
++	p = netdev_priv(slave_dev);
++
++        if (p->phy != NULL)
++                phy_detach(p->phy);
++
++	unregister_netdev(slave_dev);
++
++	free_netdev(slave_dev);
++}
++
+ /* slave device setup *******************************************************/
+ struct net_device *
+ dsa_slave_create(struct dsa_switch *ds, struct device *parent,

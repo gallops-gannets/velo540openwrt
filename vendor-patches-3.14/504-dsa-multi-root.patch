@@ -1,0 +1,148 @@
+--- a/include/net/dsa.h
++++ b/include/net/dsa.h
+@@ -25,6 +25,7 @@
+ 	 */
+ 	struct device	*mii_bus;
+ 	int		sw_addr;
++	int		root;
+ 
+ 	/*
+ 	 * The names of the switch's ports.  Use "cpu" to
+@@ -97,6 +98,7 @@
+ 	 * Parent switch tree, and switch index.
+ 	 */
+ 	struct dsa_switch_tree	*dst;
++	int			root;
+ 	int			index;
+ 
+ 	/*
+--- a/net/dsa/dsa.c
++++ b/net/dsa/dsa.c	2017-04-21 08:59:30.021785681 -0700
+@@ -22,6 +22,14 @@
+ 
+ char dsa_driver_version[] = "0.1";
+ 
++// module param to configure netif devices;
++// bit[0] all physical ports;
++// bit[1] all cpu ports;
++// bit[2] all dsa ports;
++
++static int port_ifs = 0x7;  // all ports by default
++module_param(port_ifs,int,S_IRUGO);
++MODULE_PARM_DESC(port_ifs, "create net interfaces per port");
+ 
+ /* switch driver registration ***********************************************/
+ static DEFINE_MUTEX(dsa_switch_drivers_mutex);
+@@ -85,6 +93,7 @@
+ 	char *name;
+ 	int i;
+ 	bool valid_name_found = false;
++	unsigned port_mask;
+ 
+ 	/*
+ 	 * Probe for switch model.
+@@ -107,6 +116,7 @@
+ 		return ERR_PTR(-ENOMEM);
+ 
+ 	ds->dst = dst;
++	ds->root = pd->root;
+ 	ds->index = index;
+ 	ds->pd = dst->pd->chip + index;
+ 	ds->drv = drv;
+@@ -115,7 +125,9 @@
+ 
+ 	/*
+ 	 * Validate supplied switch configuration.
++	 * port_ifs configures which interfaces to create;
+ 	 */
++	port_mask = 0;
+ 	for (i = 0; i < DSA_MAX_PORTS; i++) {
+ 		char *name;
+ 
+@@ -123,7 +135,7 @@
+ 		if (name == NULL)
+ 			continue;
+ 
+-		if (!strcmp(name, "cpu")) {
++		if (strstr(name, "cpu")) {
+ 			if (dst->cpu_switch != -1) {
+ 				printk(KERN_ERR "multiple cpu ports?!\n");
+ 				ret = -EINVAL;
+@@ -131,13 +143,19 @@
+ 			}
+ 			dst->cpu_switch = index;
+ 			dst->cpu_port = i;
+-		} else if (!strcmp(name, "dsa")) {
++			if(port_ifs & 2)
++				port_mask |= (1 << i);
++		} else if (strstr(name, "dsa")) {
+ 			ds->dsa_port_mask |= 1 << i;
+ 		} else {
+ 			ds->phys_port_mask |= 1 << i;
+ 		}
+ 		valid_name_found = true;
+ 	}
++	if(port_ifs & 1)
++		port_mask |= ds->phys_port_mask;
++	if(port_ifs & 4)
++		port_mask |= ds->dsa_port_mask;
+ 
+ 	if (!valid_name_found && i == DSA_MAX_PORTS) {
+ 		ret = -EINVAL;
+@@ -152,7 +170,6 @@
+ 	if (ds->dst->cpu_switch == index)
+ 		ds->dst->tag_protocol = drv->tag_protocol;
+ 
+-
+ 	/*
+ 	 * Do basic register setup.
+ 	 */
+@@ -175,14 +192,13 @@
+ 	if (ret < 0)
+ 		goto out_free;
+ 
+-
+ 	/*
+ 	 * Create network devices for physical switch ports.
+ 	 */
+ 	for (i = 0; i < DSA_MAX_PORTS; i++) {
+ 		struct net_device *slave_dev;
+ 
+-		if (!(ds->phys_port_mask & (1 << i)))
++		if (!(port_mask & (1 << i)))
+ 			continue;
+ 
+ 		slave_dev = dsa_slave_create(ds, parent, i, pd->port_names[i]);
+@@ -440,7 +456,7 @@
+ 
+ 			link = of_parse_phandle(port, "link", 0);
+ 
+-			if (!strcmp(port_name, "dsa") && link &&
++			if (strstr(port_name, "dsa") && link &&
+ 					pd->nr_chips > 1) {
+ 				ret = dsa_of_setup_routing_table(pd, cd,
+ 						chip_index, link);
+--- a/net/dsa/slave.c
++++ b/net/dsa/slave.c
+@@ -37,14 +37,17 @@
+ 
+ void dsa_slave_mii_bus_init(struct dsa_switch *ds)
+ {
++	struct mii_bus *master;
++
+ 	ds->slave_mii_bus->priv = (void *)ds;
+ 	ds->slave_mii_bus->name = "dsa slave smi";
+ 	ds->slave_mii_bus->read = dsa_slave_phy_read;
+ 	ds->slave_mii_bus->write = dsa_slave_phy_write;
+-	snprintf(ds->slave_mii_bus->id, MII_BUS_ID_SIZE, "dsa-%d:%.2x",
+-			ds->index, ds->pd->sw_addr);
+-	ds->slave_mii_bus->mdio_level = ds->master_mii_bus->mdio_level + 1;
+-	ds->slave_mii_bus->parent = &ds->master_mii_bus->dev;
++	master = ds->master_mii_bus;
++	ds->slave_mii_bus->mdio_level = master->mdio_level + 1;
++	ds->slave_mii_bus->parent = &master->dev;
++	snprintf(ds->slave_mii_bus->id, MII_BUS_ID_SIZE, "dsa-%d.%d:%.2x",
++		ds->root, ds->index, ds->pd->sw_addr);
+ }
+ 
+ 
