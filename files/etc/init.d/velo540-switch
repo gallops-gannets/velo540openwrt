@@ -12,7 +12,7 @@ START=19
 
 R() { mdio "$B" phy "$1" raw "$2"; }
 W() { mdio "$B" phy "$1" raw "$2" "$3"; }
-smiw() { W 0x1c 0x19 "$3"; W 0x1c 0x18 $(( 0x9400 | ($1 << 5) | $2 )); sleep 0.05; }
+smiw() { W 0x1c 0x19 "$3"; W 0x1c 0x18 $(( 0x9400 | ($1 << 5) | $2 )); }
 smir() { W 0x1c 0x18 $(( 0x9800 | ($1 << 5) | $2 )); sleep 0.05; R 0x1c 0x19; }
 
 switch_up() {
@@ -23,7 +23,7 @@ switch_up() {
 	smiw 0xf 22 1
 	v=$(smir 0xf 0)
 	smiw 0xf 0 $(( (v | 0x8100) & ~0x1800 ))
-	sleep 0.5
+	sleep 1
 	st=$(R 0x14 0)
 	W 0x14 0 $(( st & ~0x1000 ))
 	W 0x14 1 0x000e
