@@ -114,3 +114,23 @@ Current port map: LAN1-4/LAN5-8 = two dumb 4-port switches on eth0/eth1
 SFP1/SFP2 = eth2/eth3 (I350).  Both switch uplinks are in br-lan, so all
 eight LAN ports are one L2 domain; traffic between the two groups crosses
 the CPU.
+
+## Roadmap: out-of-band management box
+
+Decided 2026-09-08. The box becomes the "witness and hands" for the home
+network: on its own 5G path, on the closet UPS, simple enough to be the last
+thing standing.  Order follows the outage story.
+
+| Phase | Work | Where |
+|---|---|---|
+| 0 | `kernel-2` on the internal disk; rootfs partition ~6 GB; add python3, tailscale, ser2net, collectd; soak test 1-2 weeks watching for NMI/AER/link flaps | build + box |
+| 1 | Reachability: 5G (RM520N-GL on Waveshare dongle, or the Mudi 7 on GE2 as interim WAN), mwan3 failover, Tailscale | config |
+| 2 | Witness: probe script (WAN, router, Tower, living-room switch + devices, AP, UPS shell) pushing to Pushover/ntfy directly; offline copy of NetBox export, runbooks, router snapshots served by uhttpd | scripts |
+| 3 | Hands: ser2net consoles (router + Tower), router power via PoE (LTC4266, `vendor-patches-3.14/996-*`) or USB relay, TFTP/PXE recovery image for the router | scripts + PoE bring-up |
+| 4 | Management VLAN on real ports: DSA via mv88e6xxx platform data (see Open items) | kernel modules |
+| 5 | Maintenance WiFi (ath10k is in the image), front LED as an OpenWrt LED via leds-pca963x swnode | config + glue |
+
+Hardware facts learned the hard way: none of the three mini-PCIe slots (J7,
+J9, J31) carries USB, so cellular must be a USB device; J6 and the header by
+J9 are button headers (reset / power-off), not option jumpers; the EP06-A is
+mini-PCIe and does not fit M.2 adapters.
