@@ -47,25 +47,48 @@ if ! grep -q igb_vc "$IGB/Makefile"; then
 	echo "== applying igb patch"
 	(cd "$LINUX" && patch -p1 --forward < "$REPO"/patches/200-igb-velocloud-edge5x0.patch)
 fi
+############ 2a. ImageBuilder pass 1: unpack the release kmods ############
+# The SDK's Module.symvers does not attribute module-exported symbols
+# (libphy, i2c-core, ptp, hwmon...) to their modules, so a plain M= build
+# ends up with an empty "depends=" and kmodloader would insert igb before
+# its dependencies.  Build the image once, harvest the real .ko files, and
+# hand modpost a symvers that names them.
+fetch "$IB"
+PACKAGES="kmod-igb kmod-libphy kmod-itco-wdt kmod-i2c-i801 kmod-gpio-pca953x kmod-mdio-gpio kmod-dsa-mv88e6xxx
+          kmod-usb-storage-uas kmod-usb3 kmod-hwmon-coretemp i2c-tools mdio-tools kmod-mdio-netlink ethtool tcpdump-mini"
+echo "== ImageBuilder pass 1: $PACKAGES"
+make -C "$WORK/$IB" image PROFILE=generic PACKAGES="$(echo $PACKAGES)" 2>&1 | tail -15
+MODDIR=$(dirname "$(find "$WORK/$IB/build_dir" -name libphy.ko | head -1)")
+echo "== release modules in $MODDIR: $(ls "$MODDIR" | wc -l) files"
+EXTRA="$WORK/extra.symvers"; : > "$EXTRA"
+for ko in "$MODDIR"/*.ko; do
+	m=$(basename "$ko" .ko)
+	"${CROSS}nm" "$ko" 2>/dev/null | awk -v m="$m" '$3 ~ /^__ksymtab_/ { s=$3; sub(/^__ksymtab_/, "", s); printf "0x00000000\t%s\t%s\tEXPORT_SYMBOL\t\n", s, m }'
+done >> "$EXTRA"
+echo "== extra.symvers: $(wc -l < "$EXTRA") symbols; sample:"; grep -wE 'mdiobus_alloc|i2c_bit_add_bus|ptp_clock_register' "$EXTRA"
+echo "== SDK Module.symvers says:"; grep -wE 'mdiobus_alloc|i2c_bit_add_bus|ptp_clock_register' "$LINUX/Module.symvers" || echo "(not present)"
+# drop the SDK's own (module-less) entries for symbols we now attribute to modules
+cp "$LINUX/Module.symvers" "$LINUX/Module.symvers.orig"
+awk 'NR==FNR { have[$2]=1; next } !($2 in have)' "$EXTRA" "$LINUX/Module.symvers.orig" > "$LINUX/Module.symvers"
+
+############ 1b. kernel modules ############
 echo "== building igb.ko"
-make -C "$LINUX" ARCH=x86 CROSS_COMPILE="$CROSS" CONFIG_IGB=m M=drivers/net/ethernet/intel/igb modules
+make -C "$LINUX" ARCH=x86 CROSS_COMPILE="$CROSS" CONFIG_IGB=m M=drivers/net/ethernet/intel/igb KBUILD_EXTRA_SYMBOLS="$EXTRA" modules
 cp "$IGB/igb.ko" "$OUT/"
 
 echo "== building vc-edge5x0-mdio.ko"
 rm -rf "$WORK/glue" && cp -r "$REPO/glue" "$WORK/glue"
-make -C "$LINUX" ARCH=x86 CROSS_COMPILE="$CROSS" M="$WORK/glue" modules
+make -C "$LINUX" ARCH=x86 CROSS_COMPILE="$CROSS" M="$WORK/glue" KBUILD_EXTRA_SYMBOLS="$EXTRA" modules
 cp "$WORK/glue/vc-edge5x0-mdio.ko" "$OUT/"
 for k in "$OUT"/*.ko; do echo "-- $(basename "$k")"; "${CROSS}strip" --strip-debug "$k"; modinfo "$k" | grep -E '^(vermagic|depends|parm)'; done
+echo "-- stock igb.ko for comparison:"; modinfo "$MODDIR/igb.ko" | grep -E '^(vermagic|depends)'
 
-############ 2. image via ImageBuilder ############
-fetch "$IB"
+############ 2b. ImageBuilder pass 2: with the modules overlaid ############
 FILES="$WORK/files"; rm -rf "$FILES"; cp -r "$REPO/files" "$FILES"
 mkdir -p "$FILES/lib/modules/$KVER"
 cp "$OUT"/igb.ko "$OUT"/vc-edge5x0-mdio.ko "$FILES/lib/modules/$KVER/"
-PACKAGES="kmod-igb kmod-itco-wdt kmod-i2c-i801 kmod-gpio-pca953x kmod-mdio-gpio kmod-dsa-mv88e6xxx
-          kmod-usb-storage-uas kmod-usb3 kmod-hwmon-coretemp i2c-tools mdio-tools kmod-mdio-netlink ethtool tcpdump-mini"
-echo "== ImageBuilder: $PACKAGES"
-make -C "$WORK/$IB" image PROFILE=generic PACKAGES="$(echo $PACKAGES)" FILES="$FILES" 2>&1 | tail -40
+echo "== ImageBuilder pass 2"
+make -C "$WORK/$IB" image PROFILE=generic PACKAGES="$(echo $PACKAGES)" FILES="$FILES" 2>&1 | tail -15
 IMG=$(ls "$WORK/$IB"/bin/targets/x86/64/*-generic-ext4-combined.img.gz | head -1)
 [ -n "$IMG" ] || { echo "no ext4-combined image produced"; ls -la "$WORK/$IB"/bin/targets/x86/64/; exit 1; }
 
