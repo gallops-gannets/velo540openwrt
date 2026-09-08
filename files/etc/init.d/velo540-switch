@@ -44,10 +44,37 @@ switch_up() {
 	echo "$B: 88E6176 $id up, port4 status $(R 0x14 0)"
 }
 
+# WAN RJ45 (ge1/ge2): two 88E1514 PHYs on the bit-bang bus gpio-0, held in
+# reset by PCA9557@0x18 pin 4 (input at power-on).  Instantiate the expander
+# on the i2c-gpio adapter the glue registers, pulse the reset, then re-probe
+# the two igb functions that deferred/failed at boot.
+wan_up() {
+	[ -d /sys/bus/i2c/devices/i2c-9 ] || { echo "i2c-9 (i2c-gpio) missing"; return 1; }
+	[ -d /sys/bus/i2c/devices/9-0018 ] || echo pca9557 0x18 > /sys/bus/i2c/devices/i2c-9/new_device
+	sleep 1
+	base=""
+	for c in /sys/class/gpio/gpiochip*; do
+		[ "$(cat $c/label 2>/dev/null)" = "9-0018" ] && base=${c#*gpiochip}
+	done
+	[ -n "$base" ] || { echo "pca9557 gpiochip missing"; return 1; }
+	g=$(( base + 4 ))
+	[ -d /sys/class/gpio/gpio$g ] || echo $g > /sys/class/gpio/export
+	echo out > /sys/class/gpio/gpio$g/direction
+	echo 0 > /sys/class/gpio/gpio$g/value
+	sleep 1
+	echo 1 > /sys/class/gpio/gpio$g/value
+	sleep 1
+	for f in 0000:00:14.2 0000:00:14.3; do
+		[ -e /sys/bus/pci/drivers/igb/$f ] || echo $f > /sys/bus/pci/drivers/igb/bind 2>/dev/null
+	done
+	echo "wan PHY reset done, gpio-0: $(mdio gpio-0 phy 0 raw 2) $(mdio gpio-0 phy 1 raw 2)"
+}
+
 start() {
 	[ -x /usr/bin/mdio ] || { echo "mdio-tools missing"; return 1; }
 	for B in /sys/class/mdio_bus/igb-vc-*; do
 		[ -e "$B" ] || continue
 		switch_up "$(basename "$B")"
 	done
+	wan_up
 }

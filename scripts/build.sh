@@ -54,7 +54,8 @@ fi
 # hand modpost a symvers that names them.
 fetch "$IB"
 PACKAGES="kmod-igb kmod-libphy kmod-itco-wdt kmod-i2c-i801 kmod-gpio-pca953x kmod-mdio-gpio kmod-dsa-mv88e6xxx
-          kmod-usb-storage-uas kmod-usb3 kmod-hwmon-coretemp i2c-tools mdio-tools kmod-mdio-netlink ethtool tcpdump-mini"
+          kmod-usb-storage-uas kmod-usb3 kmod-hwmon-coretemp i2c-tools mdio-tools kmod-mdio-netlink ethtool tcpdump-mini
+          kmod-i2c-gpio gpiod-tools"
 echo "== ImageBuilder pass 1: $PACKAGES"
 make -C "$WORK/$IB" image PROFILE=generic PACKAGES="$(echo $PACKAGES)" 2>&1 | tail -15
 # harvest the release .ko files from the pass-1 image's rootfs (partition 2)
@@ -94,6 +95,7 @@ rm -rf "$WORK/glue" && cp -r "$REPO/glue" "$WORK/glue"
 make -C "$LINUX" ARCH=x86 CROSS_COMPILE="$CROSS" M="$WORK/glue" KBUILD_EXTRA_SYMBOLS="$EXTRA" modules
 cp "$WORK/glue/vc-edge5x0-mdio.ko" "$OUT/"
 for k in "$OUT"/*.ko; do echo "-- $(basename "$k")"; "${CROSS}strip" --strip-debug "$k"; modinfo "$k" | grep -E '^(vermagic|depends|parm)'; done
+cp "$MODDIR"/i2c-gpio.ko "$MODDIR"/mdio-gpio.ko "$OUT/" 2>/dev/null || true
 echo "-- stock igb.ko for comparison:"; modinfo "$MODDIR/igb.ko" | grep -E '^(vermagic|depends)'
 
 ############ 2b. ImageBuilder pass 2: with the modules overlaid ############

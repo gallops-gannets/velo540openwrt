@@ -66,6 +66,23 @@ static struct gpiod_lookup_table vc_mdio_gpios = {
 
 static struct platform_device *vc_mdio_pdev;
 
+/* Board-control I2C bus (rev B: "SMB1" pins bit-banged, SoC core GPIO 11 = SDA,
+ * 12 = SCL) carrying the two PCA9557 expanders: 0x18 = PCIe/switch/PHY resets,
+ * RF kill, USB power; 0x1c = PoE control.  Registered as adapter i2c-9 for
+ * mainline i2c-gpio; userspace instantiates the pca9557 (see
+ * /etc/init.d/velo540-switch).
+ */
+#define VC_I2C_BUS_NR 9
+static struct gpiod_lookup_table vc_i2c_gpios = {
+	.dev_id = "i2c-gpio.9",
+	.table = {
+		GPIO_LOOKUP_IDX("gpio_ich", 11, NULL, 0, GPIO_ACTIVE_HIGH | GPIO_OPEN_DRAIN), /* sda */
+		GPIO_LOOKUP_IDX("gpio_ich", 12, NULL, 1, GPIO_ACTIVE_HIGH | GPIO_OPEN_DRAIN), /* scl */
+		{ },
+	},
+};
+static struct platform_device *vc_i2c_pdev;
+
 static int __init vc_mdio_init(void)
 {
 	const char *board = dmi_get_system_info(DMI_BOARD_NAME);
@@ -80,7 +97,14 @@ static int __init vc_mdio_init(void)
 	}
 
 	vc_gpio_use_sel(BIT(vc_mdio_gpios.table[0].chip_hwnum) |
-			BIT(vc_mdio_gpios.table[1].chip_hwnum));
+			BIT(vc_mdio_gpios.table[1].chip_hwnum) |
+			BIT(vc_i2c_gpios.table[0].chip_hwnum) |
+			BIT(vc_i2c_gpios.table[1].chip_hwnum));
+
+	gpiod_add_lookup_table(&vc_i2c_gpios);
+	vc_i2c_pdev = platform_device_register_simple("i2c-gpio", VC_I2C_BUS_NR, NULL, 0);
+	if (IS_ERR(vc_i2c_pdev))
+		pr_warn("vc-edge5x0-mdio: i2c-gpio registration failed: %ld\n", PTR_ERR(vc_i2c_pdev));
 
 	gpiod_add_lookup_table(&vc_mdio_gpios);
 	vc_mdio_pdev = platform_device_register_simple("mdio-gpio", 0, NULL, 0);
@@ -98,6 +122,9 @@ static void __exit vc_mdio_exit(void)
 {
 	platform_device_unregister(vc_mdio_pdev);
 	gpiod_remove_lookup_table(&vc_mdio_gpios);
+	if (!IS_ERR_OR_NULL(vc_i2c_pdev))
+		platform_device_unregister(vc_i2c_pdev);
+	gpiod_remove_lookup_table(&vc_i2c_gpios);
 }
 
 module_init(vc_mdio_init);
