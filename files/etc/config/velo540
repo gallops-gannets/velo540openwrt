@@ -1,0 +1,4 @@
+# Per-unit settings, preserved across sysupgrade.
+# memmap: RAM pages to keep out of use (see /etc/init.d/velo540-memmap), e.g.
+#   list reserve '4K$0x21bb4a000'
+config memmap

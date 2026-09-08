@@ -3,7 +3,9 @@
 # eth4/eth5 = GE1/GE2 (88E1514, appear once velo540-switch has reset them).
 # LAN bridge = both switches; WAN = GE1.
 uci -q batch <<'UCI'
-set network.@device[0].ports='eth0 eth1'
+delete network.@device[0].ports
+add_list network.@device[0].ports='eth0'
+add_list network.@device[0].ports='eth1'
 set network.wan.device='eth4'
 set network.wan6.device='eth4'
 UCI

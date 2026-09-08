@@ -1,6 +1,7 @@
 #!/bin/sh /etc/rc.common
 # VeloCloud Edge 520/540: bring the two 88E6176 switches up as plain
-# 4-port switches behind eth0 (switch A) and eth1 (switch B).
+# 4-port switches behind eth0 (switch A) and eth1 (switch B), or, when
+# vc-edge5x0-dsa has handed them to mv88e6xxx, just their CPU links.
 # Register sequence taken from the vendor igb_vc.c and verified live:
 #  - port 4 SerDes: autoneg off, power up, reset (SMI device 0xf, page 1)
 #  - port 4: clear PHYDetect, force MAC 1000/full
@@ -42,6 +43,31 @@ switch_up() {
 		W $a 4 $(( c & ~3 ))
 	done
 	echo "$B: 88E6176 $id up, port4 status $(R 0x14 0)"
+}
+
+# DSA mode (vc-edge5x0-dsa loaded with dsa_mask set): mv88e6xxx owns the
+# switch and resets it at probe, which drops the forced CPU link on port 4.
+# The kernel driver never touches the port-4 SerDes (no phylink without a
+# device tree), so re-apply only the CPU-side pieces: SerDes autoneg off /
+# power up, PHYDetect off and MAC forced 1000/full on port 4.  User ports,
+# PHYs and forwarding state are DSA's business.
+cpu_link_up() {
+	B="$1"
+	st=$(R 0x14 0 2>/dev/null) || return 1
+	case "$st" in 0x?[89a-f]??) : ;; *)		# bit 11 = link: SerDes needs the full sequence
+		smiw 0xf 22 1
+		v=$(smir 0xf 0)
+		smiw 0xf 0 $(( (v | 0x8100) & ~0x1800 ))
+		sleep 1
+		st=$(R 0x14 0);;
+	esac
+	W 0x14 0 $(( st & ~0x1000 ))
+	W 0x14 1 0x000e
+	echo "$B: DSA CPU link, port4 status $(R 0x14 0)"
+}
+
+dsa_managed() {		# mdio device at SMI address 0 exists = handed to mv88e6xxx
+	[ -e "/sys/bus/mdio_bus/devices/$1:00" ]
 }
 
 # WAN RJ45 (ge1/ge2): two 88E1514 PHYs on the bit-bang bus gpio-0, held in
@@ -138,7 +164,11 @@ start() {
 	[ -x /usr/bin/mdio ] || { echo "mdio-tools missing"; return 1; }
 	for B in /sys/class/mdio_bus/igb-vc-*; do
 		[ -e "$B" ] || continue
-		switch_up "$(basename "$B")"
+		if dsa_managed "$(basename "$B")"; then
+			cpu_link_up "$(basename "$B")"
+		else
+			switch_up "$(basename "$B")"
+		fi
 	done
 	wan_up
 	fan_up

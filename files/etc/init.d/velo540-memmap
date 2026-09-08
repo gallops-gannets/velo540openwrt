@@ -1,0 +1,30 @@
+#!/bin/sh /etc/rc.common
+# Keep known-bad RAM pages out of use with the kernel's memmap= parameter.
+#
+# Per-unit data lives in /etc/config/velo540, which sysupgrade preserves:
+#
+#   config memmap
+#       list reserve '4K$0x21bb4a000'     # one 4 KiB page at that physical address
+#
+# Every image install rewrites /boot/grub/grub.cfg, so this re-applies the
+# reservation on each boot; a change takes effect from the next boot on.
+# Find the address in a corrected machine-check line such as
+#   mce: [Hardware Error]: ... ADDR 21bb4ad80   -> page 0x21bb4a000
+START=98
+
+start() {
+	local cfg=/boot/grub/grub.cfg want="" have="" r esc
+	[ -w "$cfg" ] || return 0
+	for r in $(uci -q get velo540.@memmap[0].reserve); do
+		want="$want memmap=$r"
+	done
+	for r in $(grep -o 'memmap=[^ ]*' /proc/cmdline); do
+		have="$have $r"
+	done
+	[ "$want" = "$have" ] && return 0
+
+	esc=$(printf '%s' "$want" | sed 's/\$/\\\\$/g')	# grub: $ must be written \$
+	awk -v add="$esc" '/^[ \t]*linux / { gsub(/ memmap=[^ ]+/, ""); $0 = $0 add } { print }' \
+		"$cfg" > "$cfg.new" && mv "$cfg.new" "$cfg" && sync
+	logger -t velo540-memmap "grub.cfg now has '${want:-no memmap}' (running:${have:-none}); reboot to apply"
+}
