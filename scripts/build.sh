@@ -110,6 +110,14 @@ RAW="$WORK/velo540.img"; gunzip -c "$IMG" > "$RAW"
 MNT="$WORK/mnt"; mkdir -p "$MNT"
 LOOP=$(sudo losetup -Pf --show "$RAW")
 sudo mount "${LOOP}p1" "$MNT"
+# unique MBR disk signature: the stock signature is shared by every release
+# image, and this board's internal disk usually carries one, so the kernel
+# would mount the wrong rootfs by PARTUUID.
+SIG=$(printf '%08x' $(( (RANDOM << 16 | RANDOM) & 0xffffffff )))
+OLDSIG=$(sudo dd if="$RAW" bs=1 skip=440 count=4 2>/dev/null | od -An -tx4 | tr -d ' ')
+printf "$(printf '\\x%s' ${SIG:6:2} ${SIG:4:2} ${SIG:2:2} ${SIG:0:2})" | sudo dd of="$RAW" bs=1 seek=440 count=4 conv=notrunc 2>/dev/null
+echo "== disk signature $OLDSIG -> $SIG"
+sudo sed -i "s/PARTUUID=$OLDSIG-/PARTUUID=$SIG-/g" "$MNT/boot/grub/grub.cfg"
 # console on ttyS1 (serial unit 1); acpi_enforce_resources=lax lets lpc_ich
 # create the gpio_ich device despite coreboot's ACPI claiming the GPIO I/O range
 sudo sed -i 's/--unit=0/--unit=1/; s/console=ttyS0,/console=ttyS1,/g; s/ noinitrd/ acpi_enforce_resources=lax noinitrd/' "$MNT/boot/grub/grub.cfg"

@@ -14,12 +14,45 @@
  * If gpiod_get fails with -ENODEV the pins are not muxed as GPIO in
  * GPIO_USE_SEL (coreboot did not do it; the vendor gpio-pcu driver did).
  *
- * UNTESTED DRAFT.
+ * Tested on an EDGE540 rev 2.8 with OpenWrt 25.12.5.
  */
 #include <linux/module.h>
 #include <linux/platform_device.h>
 #include <linux/gpio/machine.h>
 #include <linux/dmi.h>
+#include <linux/pci.h>
+#include <linux/io.h>
+
+/* Atom C2000 LPC bridge: GPIO base address register and core-well
+ * GPIO_USE_SEL.  coreboot leaves the MDC/MDIO pins in native-function
+ * mode; gpio-ich refuses to hand out a line whose USE_SEL bit is clear.
+ * The register only tolerates 32-bit accesses.
+ */
+#define C2000_LPC_GBASE		0x48
+#define C2000_GPIO_USE_SEL	0x00
+
+static int vc_gpio_use_sel(u32 bits)
+{
+	struct pci_dev *lpc;
+	u32 gbase, v;
+
+	lpc = pci_get_domain_bus_and_slot(0, 0, PCI_DEVFN(0x1f, 0));
+	if (!lpc)
+		return -ENODEV;
+	pci_read_config_dword(lpc, C2000_LPC_GBASE, &gbase);
+	pci_dev_put(lpc);
+	gbase &= 0xff80;
+	if (!gbase)
+		return -ENODEV;
+
+	v = inl(gbase + C2000_GPIO_USE_SEL);
+	if ((v & bits) != bits) {
+		outl(v | bits, gbase + C2000_GPIO_USE_SEL);
+		pr_info("vc-edge5x0-mdio: GPIO_USE_SEL @%#x: %#x -> %#x\n",
+			gbase, v, inl(gbase + C2000_GPIO_USE_SEL));
+	}
+	return 0;
+}
 
 static struct gpiod_lookup_table vc_mdio_gpios = {
 	.dev_id = "mdio-gpio.0",
@@ -45,6 +78,9 @@ static int __init vc_mdio_init(void)
 		vc_mdio_gpios.table[0].chip_hwnum = 12;
 		vc_mdio_gpios.table[1].chip_hwnum = 11;
 	}
+
+	vc_gpio_use_sel(BIT(vc_mdio_gpios.table[0].chip_hwnum) |
+			BIT(vc_mdio_gpios.table[1].chip_hwnum));
 
 	gpiod_add_lookup_table(&vc_mdio_gpios);
 	vc_mdio_pdev = platform_device_register_simple("mdio-gpio", 0, NULL, 0);

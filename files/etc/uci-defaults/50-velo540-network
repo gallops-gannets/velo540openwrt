@@ -1,0 +1,10 @@
+#!/bin/sh
+# eth0/eth1 = switch A/B uplinks (LAN1-8), eth2/eth3 = SFP1/SFP2.
+# Put both switches in the LAN bridge; SFP1 is the WAN.
+uci -q batch <<'UCI'
+set network.@device[0].ports='eth0 eth1'
+set network.wan.device='eth2'
+set network.wan6.device='eth2'
+UCI
+uci commit network
+exit 0
