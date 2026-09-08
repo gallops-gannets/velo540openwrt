@@ -70,11 +70,15 @@ echo "== release modules in $MODDIR: $(ls "$MODDIR" | wc -l) files"
 # so the stock igb.ko has an empty depends= as well; the symvers step only matters
 # for symbols that really live in modules.
 EXTRA="$WORK/extra.symvers"; : > "$EXTRA"
+# OpenWrt strips its .ko symbol tables, so read the exported names from the
+# __ksymtab_strings section (kept at runtime) instead of using nm.
 for ko in "$MODDIR"/*.ko; do
 	m=$(basename "$ko" .ko)
-	"${CROSS}nm" "$ko" 2>/dev/null | awk -v m="$m" '$3 ~ /^__ksymtab_/ { s=$3; sub(/^__ksymtab_/, "", s); printf "0x00000000\t%s\t%s\tEXPORT_SYMBOL\t\n", s, m }'
+	"${CROSS}objcopy" -O binary --only-section=__ksymtab_strings "$ko" "$WORK/ks.bin" 2>/dev/null || continue
+	tr '\0' '\n' < "$WORK/ks.bin" | awk -v m="$m" 'length($0) > 1 { printf "0x00000000\t%s\t%s\tEXPORT_SYMBOL\t\n", $0, m }'
 done >> "$EXTRA"
-echo "== extra.symvers: $(wc -l < "$EXTRA") symbols; sample:"; grep -wE 'mdiobus_alloc|i2c_bit_add_bus|ptp_clock_register' "$EXTRA"
+echo "== extra.symvers: $(wc -l < "$EXTRA") module-exported symbols; sample:"
+grep -wE 'mdiobus_alloc|i2c_bit_add_bus|ptp_clock_register|dsa_register_switch|phylink_create' "$EXTRA" || echo "(none of the sample symbols live in modules)"
 echo "== SDK Module.symvers says:"; grep -wE 'mdiobus_alloc|i2c_bit_add_bus|ptp_clock_register' "$LINUX/Module.symvers" || echo "(not present)"
 # drop the SDK's own (module-less) entries for symbols we now attribute to modules
 cp "$LINUX/Module.symvers" "$LINUX/Module.symvers.orig"
