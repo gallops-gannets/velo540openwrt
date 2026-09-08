@@ -57,8 +57,16 @@ PACKAGES="kmod-igb kmod-libphy kmod-itco-wdt kmod-i2c-i801 kmod-gpio-pca953x kmo
           kmod-usb-storage-uas kmod-usb3 kmod-hwmon-coretemp i2c-tools mdio-tools kmod-mdio-netlink ethtool tcpdump-mini"
 echo "== ImageBuilder pass 1: $PACKAGES"
 make -C "$WORK/$IB" image PROFILE=generic PACKAGES="$(echo $PACKAGES)" 2>&1 | tail -15
-MODDIR=$(dirname "$(find "$WORK/$IB/build_dir" -name libphy.ko | head -1)")
+# harvest the release .ko files from the pass-1 image's rootfs (partition 2)
+IMG1=$(ls "$WORK/$IB"/bin/targets/x86/64/*-generic-ext4-combined.img.gz | head -1)
+RAW1="$WORK/pass1.img"; gunzip -c "$IMG1" > "$RAW1"
+MODDIR="$WORK/relmods"; rm -rf "$MODDIR"; mkdir -p "$MODDIR" "$WORK/mnt1"
+LOOP1=$(sudo losetup -Pf --show "$RAW1")
+sudo mount -o ro "${LOOP1}p2" "$WORK/mnt1"
+sudo cp "$WORK/mnt1/lib/modules/$KVER/"*.ko "$MODDIR/"; sudo chown -R "$(id -u)" "$MODDIR"
+sudo umount "$WORK/mnt1"; sudo losetup -d "$LOOP1"; rm -f "$RAW1"
 echo "== release modules in $MODDIR: $(ls "$MODDIR" | wc -l) files"
+[ -f "$MODDIR/libphy.ko" ] || { echo "libphy.ko missing from release image"; ls "$MODDIR"; exit 1; }
 EXTRA="$WORK/extra.symvers"; : > "$EXTRA"
 for ko in "$MODDIR"/*.ko; do
 	m=$(basename "$ko" .ko)
