@@ -67,6 +67,15 @@ wan_up() {
 	for f in 0000:00:14.2 0000:00:14.3; do
 		[ -e /sys/bus/pci/drivers/igb/$f ] || echo $f > /sys/bus/pci/drivers/igb/bind 2>/dev/null
 	done
+	# LED wiring on this board (vendor igb_vc_setup_m88e1514): page 3,
+	# LED[0] = gigabit link, LED[1] = 10/100 link + activity.  The PHY
+	# default leaves both solid on.  Survives the PHY soft reset igb does.
+	for a in 0 1; do
+		mdio gpio-0 phy $a raw 22 3
+		mdio gpio-0 phy $a raw 16 0x0817
+		mdio gpio-0 phy $a raw 17 0x0005
+		mdio gpio-0 phy $a raw 22 0
+	done
 	echo "wan PHY reset done, gpio-0: $(mdio gpio-0 phy 0 raw 2) $(mdio gpio-0 phy 1 raw 2)"
 }
 
