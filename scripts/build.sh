@@ -110,7 +110,9 @@ RAW="$WORK/velo540.img"; gunzip -c "$IMG" > "$RAW"
 MNT="$WORK/mnt"; mkdir -p "$MNT"
 LOOP=$(sudo losetup -Pf --show "$RAW")
 sudo mount "${LOOP}p1" "$MNT"
-sudo sed -i 's/--unit=0/--unit=1/; s/console=ttyS0,/console=ttyS1,/g' "$MNT/boot/grub/grub.cfg"
+# console on ttyS1 (serial unit 1); acpi_enforce_resources=lax lets lpc_ich
+# create the gpio_ich device despite coreboot's ACPI claiming the GPIO I/O range
+sudo sed -i 's/--unit=0/--unit=1/; s/console=ttyS0,/console=ttyS1,/g; s/ noinitrd/ acpi_enforce_resources=lax noinitrd/' "$MNT/boot/grub/grub.cfg"
 echo "== grub.cfg:"; sudo cat "$MNT/boot/grub/grub.cfg"
 sudo umount "$MNT"; sudo losetup -d "$LOOP"
 gzip -9 -c "$RAW" > "$OUT/openwrt-${REL}-x86-64-velo540-ext4-combined.img.gz"
