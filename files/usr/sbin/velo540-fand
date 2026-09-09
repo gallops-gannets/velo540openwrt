@@ -8,17 +8,18 @@
 # own RPM algorithm did not converge on this fan, so the loop is here: each
 # period the duty moves one step toward the temperature-derived target RPM;
 # a tach of 0 with duty > 0 is a stall and gets a spin-up kick.  The stock
-# fan runs 2700-4000 RPM (stalls below ~2700), hence min_rpm 2800.
+# fan runs 2700-4000 RPM (stalls below ~2700; one duty step = ~200 RPM down
+# there), hence min_rpm 2950, a duty floor of 10 and a +/-150 RPM dead band.
 # Tunables in /etc/config/velo540:
 #   config fan
-#       option min_rpm '2800'   # target at or below t_min C
+#       option min_rpm '2950'   # target at or below t_min C (stock fan: one duty step above stall)
 #       option max_rpm '3900'   # target at or above t_max C
 #       option t_min   '50'
 #       option t_max   '75'
 #       option period  '3'
 BUS=9; ADDR=0x2f
 u() { v=$(uci -q get velo540.@fan[0].$1); echo "${v:-$2}"; }
-min_rpm=$(u min_rpm 2800); max_rpm=$(u max_rpm 3900); tmin=$(u t_min 50); tmax=$(u t_max 75); period=$(u period 3)
+min_rpm=$(u min_rpm 2950); max_rpm=$(u max_rpm 3900); tmin=$(u t_min 50); tmax=$(u t_max 75); period=$(u period 3)
 E() { i2cset -y $BUS $ADDR "$1" "$2"; }
 G() { i2cget -y $BUS $ADDR "$1" 2>/dev/null; }
 
@@ -56,8 +57,8 @@ while :; do
 		E 0x40 0x60; sleep 2; duty=14; E 0x40 $duty; logger -t velo540-fand "stall detected, kicked"
 	else
 		err=$(( rpm - target )); step=$(( (err < 0 ? -err : err) / 150 )); [ $step -lt 1 ] && step=1; [ $step -gt 8 ] && step=8
-		if [ "$err" -lt -60 ] && [ "$duty" -lt 255 ]; then duty=$(( duty + step )); [ $duty -gt 255 ] && duty=255; E 0x40 $duty
-		elif [ "$err" -gt 60 ] && [ "$duty" -gt 9 ]; then duty=$(( duty - step )); [ $duty -lt 9 ] && duty=9; E 0x40 $duty
+		if [ "$err" -lt -150 ] && [ "$duty" -lt 255 ]; then duty=$(( duty + step )); [ $duty -gt 255 ] && duty=255; E 0x40 $duty
+		elif [ "$err" -gt 150 ] && [ "$duty" -gt 10 ]; then duty=$(( duty - step )); [ $duty -lt 10 ] && duty=10; E 0x40 $duty
 		fi
 	fi
 	n=$(( n + 1 ))
