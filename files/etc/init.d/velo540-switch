@@ -83,6 +83,14 @@ wan_up() {
 		[ "$(cat $c/label 2>/dev/null)" = "9-0018" ] && base=${c#*gpiochip}
 	done
 	[ -n "$base" ] || { echo "pca9557 gpiochip missing"; return 1; }
+	# Already bound (script re-run at runtime): pulsing the PHY reset under a
+	# bound igb leaves the MAC at "speed unknown" with a hung Tx unit.  Skip
+	# the reset, just refresh the LED registers.
+	if [ -e /sys/bus/pci/drivers/igb/0000:00:14.2 ] && [ -e /sys/bus/pci/drivers/igb/0000:00:14.3 ]; then
+		wan_leds
+		echo "wan PHYs already up, reset skipped"
+		return 0
+	fi
 	g=$(( base + 4 ))
 	[ -d /sys/class/gpio/gpio$g ] || echo $g > /sys/class/gpio/export
 	echo out > /sys/class/gpio/gpio$g/direction
@@ -93,16 +101,20 @@ wan_up() {
 	for f in 0000:00:14.2 0000:00:14.3; do
 		[ -e /sys/bus/pci/drivers/igb/$f ] || echo $f > /sys/bus/pci/drivers/igb/bind 2>/dev/null
 	done
-	# LED wiring on this board (vendor igb_vc_setup_m88e1514): page 3,
-	# LED[0] = gigabit link, LED[1] = 10/100 link + activity.  The PHY
-	# default leaves both solid on.  Survives the PHY soft reset igb does.
+	wan_leds
+	echo "wan PHY reset done, gpio-0: $(mdio gpio-0 phy 0 raw 2) $(mdio gpio-0 phy 1 raw 2)"
+}
+
+# LED wiring on this board (vendor igb_vc_setup_m88e1514): page 3,
+# LED[0] = gigabit link, LED[1] = 10/100 link + activity.  The PHY
+# default leaves both solid on.  Survives the PHY soft reset igb does.
+wan_leds() {
 	for a in 0 1; do
 		mdio gpio-0 phy $a raw 22 3
 		mdio gpio-0 phy $a raw 16 0x0817
 		mdio gpio-0 phy $a raw 17 0x0005
 		mdio gpio-0 phy $a raw 22 0
 	done
-	echo "wan PHY reset done, gpio-0: $(mdio gpio-0 phy 0 raw 2) $(mdio gpio-0 phy 1 raw 2)"
 }
 
 # Fan: Microchip EMC2104 at 0x2f on the same bus, PWM 100% at power-on.
