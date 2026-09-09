@@ -63,6 +63,17 @@ static struct vc_sw vc_sw[VC_NUM_SW] = {
 	{ .bus_id = "igb-vc-0000:00:14.1" },
 };
 
+/* mdio_device_bus_match() is not exported to modules: same thing, locally */
+static int vc_mdio_bus_match(struct device *dev, const struct device_driver *drv)
+{
+	struct mdio_device *mdiodev = to_mdio_device(dev);
+	const struct mdio_driver *mdiodrv = to_mdio_driver(drv);
+
+	if (mdiodrv->mdiodrv.flags & MDIO_DEVICE_IS_PHY)
+		return 0;
+	return strcmp(mdiodev->modalias, drv->name) == 0;
+}
+
 /* the igb netdev of the PCI function that owns this MDIO bus */
 static struct net_device *vc_conduit_for(struct device *parent)
 {
@@ -124,7 +135,7 @@ static int vc_sw_register(struct vc_sw *sw, const char *names)
 		goto err_nd;
 	}
 	strscpy(md->modalias, "mv88e6085", sizeof(md->modalias));
-	md->bus_match = mdio_device_bus_match;	/* match on modalias (mdio_device_create leaves it NULL) */
+	md->bus_match = vc_mdio_bus_match;	/* match on modalias (mdio_device_create leaves it NULL) */
 	md->dev.platform_data = &sw->pdata;
 
 	err = mdio_device_register(md);
