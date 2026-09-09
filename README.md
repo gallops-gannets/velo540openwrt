@@ -172,7 +172,7 @@ thing standing.  Order follows the outage story.
 | 1 | Reachability: 5G (RM520N-GL on Waveshare dongle, or the Mudi 7 on GE2 as interim WAN), mwan3 failover, Tailscale | config |
 | 2 | Witness: probe script (WAN, router, Tower, living-room switch + devices, AP, UPS shell) pushing to Pushover/ntfy directly; offline copy of NetBox export, runbooks, router snapshots served by uhttpd | scripts |
 | 3 | Hands: ser2net consoles (router + Tower), router power via PoE (LTC4266, `vendor-patches-3.14/996-*`) or USB relay, TFTP/PXE recovery image for the router | scripts + PoE bring-up |
-| 4 | **Working (2026-09-09):** both 88E6176 under mainline mv88e6xxx via platform data (`vc-edge5x0-dsa` + patches/230), jacks appear as `lan1`..`lan8` with per-port link/stats/VLANs; `velo540-dsa enable` switches modes (uci `velo540.dsa.mask`, applied at boot by velo540-switch from `kernel-10` on) | done |
+| 4 | **Working (2026-09-09):** both 88E6176 under mainline mv88e6xxx via platform data (`vc-edge5x0-dsa` + patches/230), jacks appear as `lan1`..`lan8` with per-port link/stats/VLANs; `velo540-dsa enable` switches modes (uci `velo540.dsa.mask`, applied at boot by velo540-switch; verified unattended on `kernel-10`) | done |
 | 5 | Maintenance WiFi (ath10k is in the image), front LED as an OpenWrt LED via leds-pca963x swnode | config + glue |
 
 Hardware facts learned the hard way: none of the three mini-PCIe slots (J7,
