@@ -124,6 +124,7 @@ static int vc_sw_register(struct vc_sw *sw, const char *names)
 		goto err_nd;
 	}
 	strscpy(md->modalias, "mv88e6085", sizeof(md->modalias));
+	md->bus_match = mdio_device_bus_match;	/* match on modalias (mdio_device_create leaves it NULL) */
 	md->dev.platform_data = &sw->pdata;
 
 	err = mdio_device_register(md);
