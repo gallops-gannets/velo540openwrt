@@ -4,7 +4,7 @@
 # LAN bridge = both switches; WAN = GE1.
 # Only seed the bridge on a fresh install; a preserved config (sysupgrade)
 # already carries the user's port list (eth0/eth1 or the DSA lan1..lan8).
-if ! uci -q get network.@device[0].ports | grep -qE 'eth0|lan1'; then
+if ! uci -q get network.@device[0].ports | grep -qE 'eth1|lan1'; then
 	uci -q batch <<'UCI'
 delete network.@device[0].ports
 add_list network.@device[0].ports='eth0'
