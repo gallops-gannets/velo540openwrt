@@ -132,6 +132,18 @@ Jack to switch-port map (measured): LAN1=B1 LAN2=B0 LAN3=B3 LAN4=B2 LAN5=A2 LAN6
 `lan1`..`lan8`; enable it with `velo540-dsa enable` (needs the `kernel-N` image with
 patches/230 for both switches) and go back with `velo540-dsa disable`.
 
+## Tailscale and mwan3
+
+`tailscale up --hostname=velo540 --advertise-routes=192.168.1.0/24`; the
+`tailscale0` device is in the `lan` firewall zone (otherwise fw4's default
+`input REJECT` drops everything arriving over the tunnel).  mwan3 is
+installed for the future cellular failover but **disabled until a second
+WAN exists**: its policy-routing rules (priorities 1001-3001) sit ahead of
+Tailscale's table 52 and send replies to 100.x out the WAN, and stopping it
+also wiped table 52 (restart tailscaled to rebuild it).  A `tailscale`
+mwan3 rule (dest 100.64.0.0/10, policy `default`) is already in
+/etc/config/mwan3 for when it is turned back on.
+
 ## Per-unit RAM page reservation
 
 This unit logs corrected ECC machine-checks (bank 5, memory controller) at one
