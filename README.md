@@ -144,6 +144,11 @@ also wiped table 52 (restart tailscaled to rebuild it).  A `tailscale`
 mwan3 rule (dest 100.64.0.0/10, policy `default`) is already in
 /etc/config/mwan3 for when it is turned back on.
 
+Note: every `kernel-N` image carries the same MBR disk signature (ef45a064), so a
+rescue stick written from one must be re-signed (4 bytes at offset 440 plus the
+matching PARTUUID in grub.cfg) or the kernel may mount the internal disk's rootfs
+instead; the `build-N` images get a random signature per build.
+
 ## Per-unit RAM page reservation
 
 This unit logs corrected ECC machine-checks (bank 5, memory controller) at one
