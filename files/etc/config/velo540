@@ -11,6 +11,8 @@ config fan
 	option t_max '75'
 	option off_below '0'
 	option on_above '0'
+	option tach 'auto'
+	option min_duty '40'
 
 # dsa: 0 = two dumb switches (eth0/eth1), 3 = DSA for both (lan1..lan8); see velo540-dsa
 config dsa

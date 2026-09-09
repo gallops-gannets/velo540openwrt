@@ -20,9 +20,11 @@
 #       option period  '3'
 #       option off_below '0'  # >0: stop the fan when the hottest sensor is at/below this C
 #       option on_above  '0'  #     and restart it (kick + min_rpm) once above this C
+#       option tach      'auto' # auto | 0: 0 = 2-wire fan, open-loop duty curve min_duty..255
+#       option min_duty  '40'   # open-loop duty at or below t_min (2-wire fans)
 BUS=9; ADDR=0x2f
 u() { v=$(uci -q get velo540.@fan[0].$1); echo "${v:-$2}"; }
-min_rpm=$(u min_rpm 3400); max_rpm=$(u max_rpm 3900); tmin=$(u t_min 50); tmax=$(u t_max 75); period=$(u period 3); off_below=$(u off_below 0); on_above=$(u on_above 0); fan_off=0
+min_rpm=$(u min_rpm 3400); max_rpm=$(u max_rpm 3900); tmin=$(u t_min 50); tmax=$(u t_max 75); period=$(u period 3); off_below=$(u off_below 0); on_above=$(u on_above 0); fan_off=0; tach=$(u tach auto); min_duty=$(u min_duty 40); notach=0
 E() { i2cset -y $BUS $ADDR "$1" "$2"; }
 G() { i2cget -y $BUS $ADDR "$1" 2>/dev/null; }
 
@@ -49,6 +51,13 @@ duty=$(cat /tmp/velo540-fan.duty 2>/dev/null); duty=${duty:-$(printf %d "$(G 0x4
 [ "$duty" -lt 11 ] && duty=12; [ "$duty" -gt 255 ] && duty=255
 E 0x40 $duty
 n=0; zeros=0
+[ "$tach" = 0 ] && notach=1
+if [ "$tach" = auto ]; then	# probe: a spinning fan with no tach line reads 0xfff8 forever
+	E 0x40 0x80; sleep 4; i=0; while [ $i -lt 4 ]; do [ "$(read_rpm)" -gt 0 ] && break; sleep 1; i=$((i+1)); done
+	[ $i -ge 4 ] && notach=1
+	E 0x40 $duty
+fi
+[ $notach -eq 1 ] && logger -t velo540-fand "no tach signal: open-loop duty curve ${min_duty}..255"
 while :; do
 	temp=0
 	for r in 0x00 0x02 0x04; do
@@ -60,16 +69,22 @@ while :; do
 	elif [ "$temp" -ge "$tmax" ]; then target=$max_rpm
 	else target=$(( min_rpm + (max_rpm - min_rpm) * (temp - tmin) / (tmax - tmin) )); fi
 	rpm=$(read_rpm)
+	if [ $notach -eq 1 ]; then rpm=-1; fi	# never "stalls", never adjusts on tach
 	# optional fan-off-at-idle band (needs a tach: the loop below keeps it honest)
 	if [ "$off_below" -gt 0 ] && [ "$on_above" -gt "$off_below" ]; then
 		if [ $fan_off -eq 0 ] && [ "$temp" -le "$off_below" ]; then
 			fan_off=1; E 0x40 0; logger -t velo540-fand "temp ${temp}C <= ${off_below}: fan off"
 		elif [ $fan_off -eq 1 ] && [ "$temp" -ge "$on_above" ]; then
-			fan_off=0; E 0x40 0x30; sleep 2; duty=14; E 0x40 $duty; zeros=0; logger -t velo540-fand "temp ${temp}C >= ${on_above}: fan on"
+			fan_off=0; tach=$(u tach auto); min_duty=$(u min_duty 40); notach=0; E 0x40 0x30; sleep 2; duty=14; E 0x40 $duty; zeros=0; logger -t velo540-fand "temp ${temp}C >= ${on_above}: fan on"
 		fi
 		if [ $fan_off -eq 1 ]; then echo 0 > /tmp/velo540-fan.duty; sleep "$period"; continue; fi
 	fi
-	if [ "$rpm" -lt 0 ]; then :			# i2c read failed this round: leave everything alone
+	if [ $notach -eq 1 ]; then			# 2-wire fan: duty straight from temperature
+		if [ "$temp" -le "$tmin" ]; then d=$min_duty
+		elif [ "$temp" -ge "$tmax" ]; then d=255
+		else d=$(( min_duty + (255 - min_duty) * (temp - tmin) / (tmax - tmin) )); fi
+		[ "$d" -ne "$duty" ] && { duty=$d; E 0x40 $duty; }
+	elif [ "$rpm" -lt 0 ]; then :			# i2c read failed this round: leave everything alone
 	elif [ "$rpm" -eq 0 ]; then			# no tach pulses: only a stall if it persists (3 rounds)
 		zeros=$(( zeros + 1 ))
 		if [ $zeros -ge 3 ]; then
