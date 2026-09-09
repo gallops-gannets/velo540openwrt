@@ -3,9 +3,10 @@
 #   list reserve '4K$0x21bb4a000'
 config memmap
 
-# fan: software curve, see /usr/sbin/velo540-fand
+# fan: closed-loop RPM targets, see /usr/sbin/velo540-fand
 config fan
-	option min '12'
+	option min_rpm '2800'
+	option max_rpm '3900'
 	option t_min '50'
 	option t_max '75'
 
