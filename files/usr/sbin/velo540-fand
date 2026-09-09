@@ -13,14 +13,14 @@
 # 10 the stock fan still drops out every minute or two).
 # Tunables in /etc/config/velo540:
 #   config fan
-#       option min_rpm '3150'   # target at or below t_min C (stock fan: two duty steps above stall)
+#       option min_rpm '3400'   # target at or below t_min C (stock fan self-stalls up to ~3200)
 #       option max_rpm '3900'   # target at or above t_max C
 #       option t_min   '50'
 #       option t_max   '75'
 #       option period  '3'
 BUS=9; ADDR=0x2f
 u() { v=$(uci -q get velo540.@fan[0].$1); echo "${v:-$2}"; }
-min_rpm=$(u min_rpm 3150); max_rpm=$(u max_rpm 3900); tmin=$(u t_min 50); tmax=$(u t_max 75); period=$(u period 3)
+min_rpm=$(u min_rpm 3400); max_rpm=$(u max_rpm 3900); tmin=$(u t_min 50); tmax=$(u t_max 75); period=$(u period 3)
 E() { i2cset -y $BUS $ADDR "$1" "$2"; }
 G() { i2cget -y $BUS $ADDR "$1" 2>/dev/null; }
 
