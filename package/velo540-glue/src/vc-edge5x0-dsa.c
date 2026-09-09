@@ -10,8 +10,9 @@
  * points at the igb netdev of the same function, exactly what
  * mv88e6xxx_probe() expects from platform data.
  *
- *   00:14.0 -> switch A, ports 0-3 = LAN5..LAN8, conduit eth0
- *   00:14.1 -> switch B, ports 0-3 = LAN1..LAN4, conduit eth1
+ *   00:14.0 -> switch A, conduit eth0: port 0 = LAN6, 1 = LAN7, 2 = LAN5, 3 = LAN8
+ *   00:14.1 -> switch B, conduit eth1: port 0 = LAN2, 1 = LAN1, 2 = LAN4, 3 = LAN3
+ * (jack-to-port map measured by walking a cable round the jacks)
  *
  * Nothing happens unless dsa_mask is set (bit 0 = switch A, bit 1 = switch B),
  * so the plain "two dumb switches" mode of /etc/init.d/velo540-switch stays
@@ -44,7 +45,7 @@ module_param(dsa_mask, uint, 0444);
 MODULE_PARM_DESC(dsa_mask, "switches to register with DSA: 1 = 00:14.0 (LAN5-8), 2 = 00:14.1 (LAN1-4), 3 = both; 0 = leave unmanaged (default)");
 
 /* user port names for switch ports 0..3, in port order */
-static char *ports_a = "lan6,lan5,lan8,lan7";
+static char *ports_a = "lan6,lan7,lan5,lan8";
 static char *ports_b = "lan2,lan1,lan4,lan3";
 module_param(ports_a, charp, 0444);
 module_param(ports_b, charp, 0444);

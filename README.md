@@ -127,6 +127,11 @@ Measured with a microphone (high-passed level, ambient -80 dB): duty below
 point (-74 dB), full speed is -67 dB.  The default floor is therefore 12
 (4.7 %); tune `min`, `t_min`, `t_max` in `/etc/config/velo540`.
 
+Jack to switch-port map (measured): LAN1=B1 LAN2=B0 LAN3=B3 LAN4=B2 LAN5=A2 LAN6=A0 LAN7=A1 LAN8=A3
+(A = switch on 00:14.0 / eth0, B = switch on 00:14.1 / eth1).  DSA mode names the jacks
+`lan1`..`lan8`; enable it with `velo540-dsa enable` (needs the `kernel-N` image with
+patches/230 for both switches) and go back with `velo540-dsa disable`.
+
 ## Per-unit RAM page reservation
 
 This unit logs corrected ECC machine-checks (bank 5, memory controller) at one

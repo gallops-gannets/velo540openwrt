@@ -1,0 +1,25 @@
+#!/bin/sh
+# velo540-dsa enable|disable|status: switch the two 88E6176 between DSA mode
+# (mv88e6xxx, per-jack netdevs lan1..lan8) and the plain two-dumb-switches mode
+# (eth0 = LAN5-8, eth1 = LAN1-4).  Takes effect at the next boot.
+MODS=/etc/modules.d/42-vc-edge5x0-dsa
+set_ports() {
+	uci -q delete network.@device[0].ports
+	for p in "$@"; do uci add_list network.@device[0].ports="$p"; done
+	uci commit network
+}
+case "$1" in
+enable)
+	printf 'tag_dsa\nvc-edge5x0-dsa dsa_mask=3\n' > $MODS
+	set_ports lan1 lan2 lan3 lan4 lan5 lan6 lan7 lan8
+	echo "DSA mode enabled: reboot to apply";;
+disable)
+	printf 'tag_dsa\nvc-edge5x0-dsa\n' > $MODS
+	set_ports eth0 eth1
+	echo "unmanaged mode: reboot to apply";;
+status)
+	grep -q dsa_mask $MODS 2>/dev/null && echo "configured: DSA" || echo "configured: unmanaged"
+	for d in /sys/bus/mdio_bus/devices/igb-vc-*:00; do [ -e "$d" ] && echo "running: $(basename $d) -> $(readlink $d/driver 2>/dev/null | xargs basename 2>/dev/null || echo unbound)"; done
+	echo "bridge: $(uci -q get network.@device[0].ports)";;
+*)	echo "usage: velo540-dsa enable|disable|status"; exit 1;;
+esac
