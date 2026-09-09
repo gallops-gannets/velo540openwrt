@@ -115,6 +115,18 @@ SFP1/SFP2 = eth2/eth3 (I350).  Both switch uplinks are in br-lan, so all
 eight LAN ports are one L2 domain; traffic between the two groups crosses
 the CPU.
 
+## Fan
+
+The EMC2104 gets no tach from this fan, and its output feeds a supply
+regulator rather than a PWM pin, so the vendor's RPM lookup table just
+re-kicks the fan every ~15 s.  `velo540-fand` runs the chip open-loop at
+26 kHz with PCA9557@0x1c FORCE_PWM low / FORCE_12V high (the only pin state
+where the duty has an effect) and sets the duty from the hottest sensor.
+Measured with a microphone (high-passed level, ambient -80 dB): duty below
+0x0b stalls and auto-restarts (cycling), 0x0b-0x0c is the quietest steady
+point (-74 dB), full speed is -67 dB.  The default floor is therefore 12
+(4.7 %); tune `min`, `t_min`, `t_max` in `/etc/config/velo540`.
+
 ## Per-unit RAM page reservation
 
 This unit logs corrected ECC machine-checks (bank 5, memory controller) at one
