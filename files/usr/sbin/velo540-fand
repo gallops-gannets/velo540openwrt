@@ -22,7 +22,8 @@ period=$(uci -q get velo540.@fan[0].period); period=${period:-5}
 [ "$(i2cget -y $BUS $ADDR 0xfd 2>/dev/null)" = "0x1d" ] || { logger -t velo540-fand "no EMC2104 at $ADDR"; exit 1; }
 i2cset -y $BUS $ADDR 0x50 0x00	# lookup table off
 i2cset -y $BUS $ADDR 0x42 0x10	# open-loop PWM
-i2cset -y $BUS $ADDR 0x41 0x80	# PWM divider (vendor value)
+i2cset -y $BUS $ADDR 0x2b 0x0c	# PWM base 26 kHz (vendor: 2.4 kHz / 128 = 19 Hz, an audible tick at part load)
+i2cset -y $BUS $ADDR 0x41 0x01	# PWM divider 1
 last=-100
 while :; do
 	t=0

@@ -109,14 +109,15 @@ wan_up() {
 # The vendor programs its RPM lookup table, but the fan here gives the chip
 # no tach signal, so the table makes it pulse; the curve now lives in
 # /usr/sbin/velo540-fand (velo540-fan service).  This only enables PWM
-# control: divider, open-loop mode, and the PCA9557@0x1c pins.
+# control: 26 kHz PWM, open-loop mode, and the PCA9557@0x1c pins.
 fan_up() {
 	[ -d /sys/bus/i2c/devices/i2c-9 ] || return 1
 	[ "$(i2cget -y 9 0x2f 0xfd 2>/dev/null)" = "0x1d" ] || { echo "no EMC2104 at 0x2f"; return 1; }
 	E() { i2cset -y 9 0x2f "$1" "$2"; }
 	E 0x50 0x00
 	E 0x42 0x10
-	E 0x41 0x80
+	E 0x2b 0x0c
+	E 0x41 0x01
 	# PCA9557@0x1c pins 6 (FORCE_PWM) and 7 (FORCE_12V) must be high for the
 	# PWM to take effect; low = fan hard-wired to full speed.  Pins 0/1 are
 	# PoE control: never touch them.
