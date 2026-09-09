@@ -35,8 +35,9 @@ E 0x2b 0x0c	# PWM base 26 kHz
 E 0x41 0x01	# divider 1
 E 0x42 0x10	# open-loop PWM: the loop below owns the drive
 
-read_rpm() {
-	t=$(( $(printf %d "$(G 0x4e)") * 256 + $(printf %d "$(G 0x4f)") ))
+read_rpm() {	# -1 = read failed, 0 = no tach pulses, else RPM
+	hi=$(G 0x4e); lo=$(G 0x4f); [ -n "$hi" ] && [ -n "$lo" ] || { echo -1; return; }
+	t=$(( $(printf %d "$hi") * 256 + $(printf %d "$lo") ))
 	[ $t -ge 65528 ] && echo 0 || echo $(( 3932160 / (t >> 3) ))
 }
 # resume from the last duty we set (procd restart passes through stop, which
@@ -44,7 +45,7 @@ read_rpm() {
 duty=$(cat /tmp/velo540-fan.duty 2>/dev/null); duty=${duty:-$(printf %d "$(G 0x40)")}
 [ "$duty" -lt 10 ] && duty=12; [ "$duty" -gt 255 ] && duty=255
 E 0x40 $duty
-n=0
+n=0; zeros=0
 while :; do
 	temp=0
 	for r in 0x00 0x02 0x04; do
@@ -56,9 +57,14 @@ while :; do
 	elif [ "$temp" -ge "$tmax" ]; then target=$max_rpm
 	else target=$(( min_rpm + (max_rpm - min_rpm) * (temp - tmin) / (tmax - tmin) )); fi
 	rpm=$(read_rpm)
-	if [ "$rpm" -eq 0 ]; then			# stalled: kick, then resume above the stall point
-		E 0x40 0x60; sleep 2; duty=14; E 0x40 $duty; logger -t velo540-fand "stall detected, kicked"
+	if [ "$rpm" -lt 0 ]; then :			# i2c read failed this round: leave everything alone
+	elif [ "$rpm" -eq 0 ]; then			# no tach pulses: only a stall if it persists (3 rounds)
+		zeros=$(( zeros + 1 ))
+		if [ $zeros -ge 3 ]; then
+			E 0x40 0x60; sleep 2; duty=14; E 0x40 $duty; zeros=0; logger -t velo540-fand "stall detected, kicked"
+		fi
 	else
+		zeros=0
 		err=$(( rpm - target )); step=$(( (err < 0 ? -err : err) / 150 )); [ $step -lt 1 ] && step=1; [ $step -gt 8 ] && step=8
 		if [ "$err" -lt -150 ] && [ "$duty" -lt 255 ]; then duty=$(( duty + step )); [ $duty -gt 255 ] && duty=255; E 0x40 $duty
 		elif [ "$err" -gt 150 ] && [ "$duty" -gt 10 ]; then duty=$(( duty - step )); [ $duty -lt 10 ] && duty=10; E 0x40 $duty
