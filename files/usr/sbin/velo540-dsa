@@ -1,8 +1,9 @@
 #!/bin/sh
-# velo540-dsa enable|disable|status: switch the two 88E6176 between DSA mode
-# (mv88e6xxx, per-jack netdevs lan1..lan8) and the plain two-dumb-switches mode
-# (eth0 = LAN5-8, eth1 = LAN1-4).  Takes effect at the next boot.
-MODS=/etc/modules.d/42-vc-edge5x0-dsa
+# velo540-dsa enable|disable|status: DSA mode (mv88e6xxx, per-jack netdevs
+# lan1..lan8) vs. the plain two-dumb-switches mode (eth0 = LAN5-8, eth1 = LAN1-4).
+# The choice lives in /etc/config/velo540 (kept across sysupgrade); the
+# velo540-switch init script applies it at boot by writing the module's
+# dsa_mask parameter.  Takes effect at the next boot.
 set_ports() {
 	uci -q delete network.@device[0].ports
 	for p in "$@"; do uci add_list network.@device[0].ports="$p"; done
@@ -10,16 +11,19 @@ set_ports() {
 }
 case "$1" in
 enable)
-	printf 'tag_dsa\nvc-edge5x0-dsa dsa_mask=3\n' > $MODS
+	uci -q get velo540.@dsa[0] >/dev/null || uci add velo540 dsa >/dev/null
+	uci set velo540.@dsa[0].mask=3; uci commit velo540
 	set_ports lan1 lan2 lan3 lan4 lan5 lan6 lan7 lan8
 	echo "DSA mode enabled: reboot to apply";;
 disable)
-	printf 'tag_dsa\nvc-edge5x0-dsa\n' > $MODS
+	uci -q get velo540.@dsa[0] >/dev/null || uci add velo540 dsa >/dev/null
+	uci set velo540.@dsa[0].mask=0; uci commit velo540
 	set_ports eth0 eth1
 	echo "unmanaged mode: reboot to apply";;
 status)
-	grep -q dsa_mask $MODS 2>/dev/null && echo "configured: DSA" || echo "configured: unmanaged"
-	for d in /sys/bus/mdio_bus/devices/igb-vc-*:00; do [ -e "$d" ] && echo "running: $(basename $d) -> $(readlink $d/driver 2>/dev/null | xargs basename 2>/dev/null || echo unbound)"; done
-	echo "bridge: $(uci -q get network.@device[0].ports)";;
+	echo "configured: mask $(uci -q get velo540.@dsa[0].mask || echo 0) (0 = unmanaged, 3 = DSA both switches)"
+	echo "running:    mask $(cat /sys/module/vc_edge5x0_dsa/parameters/dsa_mask 2>/dev/null || echo '- (module not loaded)')"
+	for d in /sys/bus/mdio_bus/devices/igb-vc-*:00; do [ -e "$d" ] && echo "  $(basename $d) -> $(readlink $d/driver 2>/dev/null | xargs basename 2>/dev/null || echo unbound)"; done
+	echo "bridge:     $(uci -q get network.@device[0].ports)";;
 *)	echo "usage: velo540-dsa enable|disable|status"; exit 1;;
 esac

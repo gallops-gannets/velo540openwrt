@@ -2,10 +2,16 @@
 # eth0/eth1 = switch A/B uplinks (LAN1-8), eth2/eth3 = SFP1/SFP2,
 # eth4/eth5 = GE1/GE2 (88E1514, appear once velo540-switch has reset them).
 # LAN bridge = both switches; WAN = GE1.
-uci -q batch <<'UCI'
+# Only seed the bridge on a fresh install; a preserved config (sysupgrade)
+# already carries the user's port list (eth0/eth1 or the DSA lan1..lan8).
+if ! uci -q get network.@device[0].ports | grep -qE 'eth0|lan1'; then
+	uci -q batch <<'UCI'
 delete network.@device[0].ports
 add_list network.@device[0].ports='eth0'
 add_list network.@device[0].ports='eth1'
+UCI
+fi
+uci -q batch <<'UCI'
 set network.wan.device='eth4'
 set network.wan6.device='eth4'
 UCI

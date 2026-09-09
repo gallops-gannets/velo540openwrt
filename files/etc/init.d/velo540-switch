@@ -166,6 +166,14 @@ led_up() {
 
 start() {
 	[ -x /usr/bin/mdio ] || { echo "mdio-tools missing"; return 1; }
+	# DSA mode from /etc/config/velo540: hand the switches to mv88e6xxx now,
+	# so netifd finds lan1..lan8 when it brings br-lan up.
+	P=/sys/module/vc_edge5x0_dsa/parameters/dsa_mask
+	want=$(uci -q get velo540.@dsa[0].mask); want=${want:-0}
+	if [ -w "$P" ] && [ "$(cat $P)" != "$want" ]; then
+		echo "$want" > "$P" && echo "dsa_mask -> $want"
+		sleep 3
+	fi
 	for B in /sys/class/mdio_bus/igb-vc-*; do
 		[ -e "$B" ] || continue
 		if dsa_managed "$(basename "$B")"; then

@@ -33,6 +33,7 @@
 #include <linux/netdevice.h>
 #include <linux/rtnetlink.h>
 #include <linux/dmi.h>
+#include <linux/mutex.h>
 #include <linux/platform_data/mv88e6xxx.h>
 #include <net/net_namespace.h>
 
@@ -41,8 +42,13 @@
 #define VC_LAN_PORTS	4
 
 static unsigned int dsa_mask;
-module_param(dsa_mask, uint, 0444);
-MODULE_PARM_DESC(dsa_mask, "switches to register with DSA: 1 = 00:14.0 (LAN5-8), 2 = 00:14.1 (LAN1-4), 3 = both; 0 = leave unmanaged (default)");
+static int vc_dsa_mask_set(const char *val, const struct kernel_param *kp);
+static const struct kernel_param_ops vc_dsa_mask_ops = {
+	.set = vc_dsa_mask_set,
+	.get = param_get_uint,
+};
+module_param_cb(dsa_mask, &vc_dsa_mask_ops, &dsa_mask, 0644);
+MODULE_PARM_DESC(dsa_mask, "switches to register with DSA: 1 = 00:14.0 (LAN5-8), 2 = 00:14.1 (LAN1-4), 3 = both; 0 = unmanaged (default). Writable at runtime via /sys/module/vc_edge5x0_dsa/parameters/dsa_mask");
 
 /* user port names for switch ports 0..3, in port order */
 static char *ports_a = "lan6,lan7,lan5,lan8";
@@ -204,6 +210,53 @@ static struct platform_driver vc_dsa_driver = {
 };
 
 static struct platform_device *vc_dsa_pdev;
+static bool vc_dsa_driver_ok;
+static DEFINE_MUTEX(vc_dsa_lock);
+
+/* (re)create the platform device for the current mask; 0 = tear down */
+static int vc_dsa_apply(unsigned int mask)
+{
+	if (!vc_dsa_driver_ok)
+		return -ENODEV;
+	if (vc_dsa_pdev) {
+		platform_device_unregister(vc_dsa_pdev);
+		vc_dsa_pdev = NULL;
+	}
+	if (!mask) {
+		pr_info("vc-edge5x0-dsa: dsa_mask=0, switches left unmanaged\n");
+		return 0;
+	}
+	vc_dsa_pdev = platform_device_register_simple("vc-edge5x0-dsa", -1, NULL, 0);
+	if (IS_ERR(vc_dsa_pdev)) {
+		int err = PTR_ERR(vc_dsa_pdev);
+
+		vc_dsa_pdev = NULL;
+		return err;
+	}
+	return 0;
+}
+
+/* echo 3 > /sys/module/vc_edge5x0_dsa/parameters/dsa_mask (used by the init script) */
+static int vc_dsa_mask_set(const char *val, const struct kernel_param *kp)
+{
+	unsigned int old = dsa_mask, new;
+	int err;
+
+	err = kstrtouint(val, 0, &new);
+	if (err)
+		return err;
+	if (new & ~GENMASK(VC_NUM_SW - 1, 0))
+		return -EINVAL;
+	mutex_lock(&vc_dsa_lock);
+	dsa_mask = new;
+	if (new != old && vc_dsa_driver_ok) {
+		err = vc_dsa_apply(new);
+		if (err)
+			dsa_mask = 0;
+	}
+	mutex_unlock(&vc_dsa_lock);
+	return err;
+}
 
 static int __init vc_dsa_init(void)
 {
@@ -212,27 +265,27 @@ static int __init vc_dsa_init(void)
 
 	if (!board || (strcmp(board, "EDGE520") && strcmp(board, "EDGE540")))
 		return -ENODEV;
-	if (!dsa_mask) {
-		pr_info("vc-edge5x0-dsa: dsa_mask=0, switches left unmanaged\n");
-		return 0;
-	}
 
 	err = platform_driver_register(&vc_dsa_driver);
 	if (err)
 		return err;
-	vc_dsa_pdev = platform_device_register_simple("vc-edge5x0-dsa", -1, NULL, 0);
-	if (IS_ERR(vc_dsa_pdev)) {
+	mutex_lock(&vc_dsa_lock);
+	vc_dsa_driver_ok = true;
+	err = vc_dsa_apply(dsa_mask);
+	mutex_unlock(&vc_dsa_lock);
+	if (err) {
 		platform_driver_unregister(&vc_dsa_driver);
-		return PTR_ERR(vc_dsa_pdev);
+		vc_dsa_driver_ok = false;
 	}
-	return 0;
+	return err;
 }
 
 static void __exit vc_dsa_exit(void)
 {
-	if (!dsa_mask)
-		return;
-	platform_device_unregister(vc_dsa_pdev);
+	mutex_lock(&vc_dsa_lock);
+	vc_dsa_apply(0);
+	vc_dsa_driver_ok = false;
+	mutex_unlock(&vc_dsa_lock);
 	platform_driver_unregister(&vc_dsa_driver);
 }
 
