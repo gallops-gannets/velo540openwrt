@@ -1,4 +1,4 @@
-# VeloCloud Edge 540 on OpenWrt 25.12 (kernel 6.12)
+# VeloCloud Edge 5X0 on OpenWrt 25.12 (kernel 6.12)
 
 Get the 10 RJ45 ports of a VeloCloud Edge 520/540 working on stock OpenWrt
 25.12.5 with a small, rebasable patch set instead of the vendor's kernel fork.
