@@ -9,11 +9,8 @@ OUT=${OUT:-$PWD/out}; mkdir -p "$OUT"
 cd openwrt
 ./scripts/feeds update -a >/dev/null && ./scripts/feeds install -a >/dev/null
 
-# kernel patches: igb glue, mdio-gpio workaround, xhci quirk
-cp "$REPO"/patches/200-igb-velocloud-edge5x0.patch \
-   "$REPO"/patches/210-mdio-gpio-clear-level-before-input.patch \
-   "$REPO"/patches/220-xhci-ti-tusb73x0-force-hcrst.patch \
-   target/linux/x86/patches-6.12/
+# kernel patches: igb glue, mdio-gpio workaround, xhci quirk, DSA own-tree
+cp "$REPO"/patches/*.patch target/linux/x86/patches-6.12/
 # glue as a kernel package, rootfs overlay
 rm -rf package/velo540-glue && cp -r "$REPO"/package/velo540-glue package/
 rm -rf files && cp -r "$REPO"/files files && rm -f files/etc/inittab   # TARGET_SERIAL handles the shell
