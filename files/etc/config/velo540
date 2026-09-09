@@ -5,7 +5,7 @@ config memmap
 
 # fan: closed-loop RPM targets, see /usr/sbin/velo540-fand
 config fan
-	option min_rpm '2950'
+	option min_rpm '3150'
 	option max_rpm '3900'
 	option t_min '50'
 	option t_max '75'
