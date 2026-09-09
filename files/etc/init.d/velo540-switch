@@ -118,9 +118,9 @@ fan_up() {
 	E 0x42 0x10
 	E 0x2b 0x0c
 	E 0x41 0x01
-	# PCA9557@0x1c pins 6 (FORCE_PWM) and 7 (FORCE_12V) must be high for the
-	# PWM to take effect; low = fan hard-wired to full speed.  Pins 0/1 are
-	# PoE control: never touch them.
+	# PCA9557@0x1c pin 6 (FORCE_PWM) low, pin 7 (FORCE_12V) high: the only
+	# combination where the fan follows the PWM duty (see velo540-fand).
+	# Pins 0/1 are PoE control: never touch them.
 	[ -d /sys/bus/i2c/devices/9-001c ] || echo pca9557 0x1c > /sys/bus/i2c/devices/i2c-9/new_device
 	sleep 1
 	b2=""
@@ -132,7 +132,7 @@ fan_up() {
 			g=$(( b2 + p ))
 			[ -d /sys/class/gpio/gpio$g ] || echo $g > /sys/class/gpio/export
 			echo out > /sys/class/gpio/gpio$g/direction
-			echo 1 > /sys/class/gpio/gpio$g/value
+			echo $(( p - 6 )) > /sys/class/gpio/gpio$g/value
 		done
 	fi
 	echo "fan: EMC2104 in PWM mode, temps $(i2cget -y 9 0x2f 0)/$(i2cget -y 9 0x2f 2)/$(i2cget -y 9 0x2f 4)/$(i2cget -y 9 0x2f 6) C"

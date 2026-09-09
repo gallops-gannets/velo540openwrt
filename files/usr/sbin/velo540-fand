@@ -9,13 +9,13 @@
 # `t_max` C, only rewritten when it moves by 4 or more (hysteresis).
 # Tunables in /etc/config/velo540:
 #   config fan
-#       option min   '96'    # duty 0-255 at or below t_min (default 96 = 38 %)
-#       option t_min '40'
+#       option min   '10'    # duty 0-255 at or below t_min (default 10 = 4 %, just above stall)
+#       option t_min '50'
 #       option t_max '75'
 #       option period '5'
 BUS=9; ADDR=0x2f
-min=$(uci -q get velo540.@fan[0].min);    min=${min:-96}
-tmin=$(uci -q get velo540.@fan[0].t_min); tmin=${tmin:-40}
+min=$(uci -q get velo540.@fan[0].min);    min=${min:-10}
+tmin=$(uci -q get velo540.@fan[0].t_min); tmin=${tmin:-50}
 tmax=$(uci -q get velo540.@fan[0].t_max); tmax=${tmax:-75}
 period=$(uci -q get velo540.@fan[0].period); period=${period:-5}
 
@@ -24,6 +24,16 @@ i2cset -y $BUS $ADDR 0x50 0x00	# lookup table off
 i2cset -y $BUS $ADDR 0x42 0x10	# open-loop PWM
 i2cset -y $BUS $ADDR 0x2b 0x0c	# PWM base 26 kHz (vendor: 2.4 kHz / 128 = 19 Hz, an audible tick at part load)
 i2cset -y $BUS $ADDR 0x41 0x01	# PWM divider 1
+# PCA9557@0x1c pin 6 (FORCE_PWM) low + pin 7 (FORCE_12V) high is the only
+# combination where the fan follows the 26 kHz duty; both high (vendor) or
+# both low run it flat out.  The response is compressed: ~3 % stalls, ~5 %
+# is already half speed, so the default curve lives in the low range.
+b2=""; for c in /sys/class/gpio/gpiochip*; do [ "$(cat $c/label 2>/dev/null)" = "9-001c" ] && b2=${c#*gpiochip}; done
+if [ -n "$b2" ]; then
+	for p in 6 7; do g=$(( b2 + p )); [ -d /sys/class/gpio/gpio$g ] || echo $g > /sys/class/gpio/export; echo out > /sys/class/gpio/gpio$g/direction; done
+	echo 0 > /sys/class/gpio/gpio$(( b2 + 6 ))/value
+	echo 1 > /sys/class/gpio/gpio$(( b2 + 7 ))/value
+fi
 last=-100
 while :; do
 	t=0

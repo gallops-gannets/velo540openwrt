@@ -5,6 +5,6 @@ config memmap
 
 # fan: software curve, see /usr/sbin/velo540-fand
 config fan
-	option min '96'
-	option t_min '40'
+	option min '10'
+	option t_min '50'
 	option t_max '75'
