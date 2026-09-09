@@ -39,7 +39,10 @@ read_rpm() {
 	t=$(( $(printf %d "$(G 0x4e)") * 256 + $(printf %d "$(G 0x4f)") ))
 	[ $t -ge 65528 ] && echo 0 || echo $(( 3932160 / (t >> 3) ))
 }
-duty=$(printf %d "$(G 0x40)"); [ "$duty" -lt 10 ] && duty=12
+# resume from the last duty we set (procd restart passes through stop, which
+# forces full speed as a fail-safe; without this every config change spikes)
+duty=$(cat /tmp/velo540-fan.duty 2>/dev/null); duty=${duty:-$(printf %d "$(G 0x40)")}
+[ "$duty" -lt 10 ] && duty=12; [ "$duty" -gt 255 ] && duty=255
 E 0x40 $duty
 n=0
 while :; do
@@ -61,6 +64,7 @@ while :; do
 		elif [ "$err" -gt 150 ] && [ "$duty" -gt 10 ]; then duty=$(( duty - step )); [ $duty -lt 10 ] && duty=10; E 0x40 $duty
 		fi
 	fi
+	echo $duty > /tmp/velo540-fan.duty
 	n=$(( n + 1 ))
 	[ $(( n % 20 )) -eq 1 ] && logger -t velo540-fand "temp ${temp}C target ${target} rpm ${rpm} duty ${duty}"
 	sleep "$period"
