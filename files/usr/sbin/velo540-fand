@@ -9,12 +9,12 @@
 # `t_max` C, only rewritten when it moves by 4 or more (hysteresis).
 # Tunables in /etc/config/velo540:
 #   config fan
-#       option min   '10'    # duty 0-255 at or below t_min (default 10 = 4 %, just above stall)
+#       option min   '10'    # duty 0-255 at or below t_min (default 12 = 4.7 %, the lowest level that does not stall)
 #       option t_min '50'
 #       option t_max '75'
 #       option period '5'
 BUS=9; ADDR=0x2f
-min=$(uci -q get velo540.@fan[0].min);    min=${min:-10}
+min=$(uci -q get velo540.@fan[0].min);    min=${min:-12}
 tmin=$(uci -q get velo540.@fan[0].t_min); tmin=${tmin:-50}
 tmax=$(uci -q get velo540.@fan[0].t_max); tmax=${tmax:-75}
 period=$(uci -q get velo540.@fan[0].period); period=${period:-5}
