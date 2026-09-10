@@ -70,9 +70,9 @@ backgrounded.
   weak cell that logs corrected ECC machine-checks).
 * **Witness** (`config witness`): `list target 'name=ip'`, `period`, `fails`,
   `ntfy_url`, `pushover_token`/`pushover_user`.  Logs state changes, pages on
-  down/recovered, lights the red logo LED while anything is down.
+  down/recovered, lights the blue logo LED while anything is down.
 * **LEDs**: standard OpenWrt LED config (`/etc/config/system`); defaults are
-  green steady = all good, red = the witness sees something down, blue off (reserved).
+  green steady = all good, blue = the witness sees something down, red = running on cellular (hotplug hook, WAN down and `wwan`/`cellular` up).
 
 Notes: `tailscale0` belongs in the `lan` firewall zone (fw4 rejects tunnel
 traffic otherwise); mwan3 must stay disabled until a second WAN exists (its

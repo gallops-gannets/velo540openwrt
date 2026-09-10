@@ -1,0 +1,11 @@
+#!/bin/sh
+# Logo LED red = running on cellular: on whenever the primary WAN is down and a
+# cellular interface (named wwan or cellular) is up.  Evaluated on every
+# interface event.
+LED=/sys/class/leds/pca963x:red:logo/brightness
+[ -w "$LED" ] || exit 0
+. /lib/functions/network.sh
+wan_up=0; cell_up=0
+network_is_up wan && wan_up=1
+for i in wwan cellular; do network_is_up $i && cell_up=1; done
+if [ $wan_up -eq 0 ] && [ $cell_up -eq 1 ]; then echo 255 > "$LED"; else echo 0 > "$LED"; fi
