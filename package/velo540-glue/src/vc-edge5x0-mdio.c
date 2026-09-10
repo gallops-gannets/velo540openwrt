@@ -24,6 +24,7 @@
 #include <linux/io.h>
 #include <linux/i2c.h>
 #include <linux/property.h>
+#include <linux/err.h>
 
 /* Atom C2000 LPC bridge: GPIO base address register and core-well
  * GPIO_USE_SEL.  coreboot leaves the MDC/MDIO pins in native-function
@@ -113,6 +114,38 @@ static struct i2c_board_info vc_led_info = {
 	I2C_BOARD_INFO("pca9634", 0x54),
 	.swnode = &vc_led_node,
 };
+static struct i2c_client *vc_led_client;
+
+/* i2c_register_board_info() is init-only; create the client once the
+ * i2c-gpio adapter exists (deferred probe until then). */
+static int vc_led_probe(struct platform_device *pdev)
+{
+	struct i2c_adapter *adap = i2c_get_adapter(VC_I2C_BUS_NR);
+
+	if (!adap)
+		return -EPROBE_DEFER;
+	vc_led_client = i2c_new_client_device(adap, &vc_led_info);
+	i2c_put_adapter(adap);
+	if (IS_ERR(vc_led_client)) {
+		int err = PTR_ERR(vc_led_client);
+
+		vc_led_client = NULL;
+		return err;
+	}
+	return 0;
+}
+static void vc_led_remove(struct platform_device *pdev)
+{
+	if (vc_led_client)
+		i2c_unregister_device(vc_led_client);
+	vc_led_client = NULL;
+}
+static struct platform_driver vc_led_driver = {
+	.probe = vc_led_probe,
+	.remove_new = vc_led_remove,
+	.driver = { .name = "vc-edge5x0-led" },
+};
+static struct platform_device *vc_led_pdev;
 
 static int __init vc_mdio_init(void)
 {
@@ -132,14 +165,19 @@ static int __init vc_mdio_init(void)
 			BIT(vc_i2c_gpios.table[0].chip_hwnum) |
 			BIT(vc_i2c_gpios.table[1].chip_hwnum));
 
-	/* board info must be registered before the adapter appears */
-	if (software_node_register_node_group(vc_led_nodes) == 0 &&
-	    i2c_register_board_info(VC_I2C_BUS_NR, &vc_led_info, 1))
-		pr_warn("vc-edge5x0-mdio: logo LED board info registration failed\n");
 	gpiod_add_lookup_table(&vc_i2c_gpios);
 	vc_i2c_pdev = platform_device_register_simple("i2c-gpio", VC_I2C_BUS_NR, NULL, 0);
 	if (IS_ERR(vc_i2c_pdev))
 		pr_warn("vc-edge5x0-mdio: i2c-gpio registration failed: %ld\n", PTR_ERR(vc_i2c_pdev));
+	/* logo LED: PCA9634 client on that adapter, described by software nodes */
+	if (software_node_register_node_group(vc_led_nodes) == 0 &&
+	    platform_driver_register(&vc_led_driver) == 0) {
+		vc_led_pdev = platform_device_register_simple("vc-edge5x0-led", -1, NULL, 0);
+		if (IS_ERR(vc_led_pdev)) {
+			pr_warn("vc-edge5x0-mdio: logo LED device registration failed\n");
+			vc_led_pdev = NULL;
+		}
+	}
 
 	gpiod_add_lookup_table(&vc_mdio_gpios);
 	vc_mdio_pdev = platform_device_register_simple("mdio-gpio", 0, NULL, 0);
@@ -155,12 +193,15 @@ static int __init vc_mdio_init(void)
 
 static void __exit vc_mdio_exit(void)
 {
+	if (vc_led_pdev)
+		platform_device_unregister(vc_led_pdev);
+	platform_driver_unregister(&vc_led_driver);
+	software_node_unregister_node_group(vc_led_nodes);
 	platform_device_unregister(vc_mdio_pdev);
 	gpiod_remove_lookup_table(&vc_mdio_gpios);
 	if (!IS_ERR_OR_NULL(vc_i2c_pdev))
 		platform_device_unregister(vc_i2c_pdev);
 	gpiod_remove_lookup_table(&vc_i2c_gpios);
-	software_node_unregister_node_group(vc_led_nodes);
 }
 
 module_init(vc_mdio_init);
