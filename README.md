@@ -1,186 +1,141 @@
 # VeloCloud Edge 5X0 on OpenWrt 25.12 (kernel 6.12)
 
-Get the 10 RJ45 ports of a VeloCloud Edge 520/540 working on stock OpenWrt
-25.12.5 with a small, rebasable patch set instead of the vendor's kernel fork.
+Stock OpenWrt 25.12.5 on the VeloCloud Edge 520 and Edge 540 (Intel Atom
+C2000 "Rangeley" boards with two Marvell 88E6176 switches, two 88E1514 WAN
+PHYs and two SFP cages), with a small, rebasable patch set instead of the
+vendor's kernel fork.  Everything below is tested on an EDGE540 (C2558,
+8 GB, fan) and an EDGE520 (C2358, 4 GB, fanless), both board rev 2.8.
 
-Status (tested on an EDGE540 board rev 2.8):
+Latest image: the newest `kernel-N` release on the
+[releases page](https://github.com/gallops-gannets/velo540openwrt/releases).
+Each carries a ready-to-write USB stick image (`openwrt-velo5x0-stick.img.gz`)
+and the plain image for `sysupgrade`.
+
+## Status
 
 | | |
 |---|---|
-| LAN1-8 (2x 88E6176 behind I354 func 0/1) | **working**, as two unmanaged 4-port switches on eth0/eth1, both in br-lan (LAN1 = switch B port 1) |
-| SFP1/SFP2 (I350) | working (eth2, eth3) |
-| GE1/GE2 (88E1514 behind I354 func 2/3) | **working** (eth4 = wan, eth5): PCA9557 reset pulse + patched mdio-gpio |
-| TCO watchdog | working (kmod-itco-wdt) |
-| Front logo LED (PCA9634 @ i2c 0x54) | working: green once the boot script has run |
-| Fan (EMC2104 @ i2c 0x2f) | working: vendor lookup table programmed at boot + FORCE_PWM/FORCE_12V pins on PCA9557@0x1c; off below 50 C. Stock kernel leaves it at 100% |
-| USB 3 ports (TI TUSB7340) | broken on 6.12: controller does not halt; `patches/220-*` is a port of the vendor fix but xhci is built into the OpenWrt x86 kernel, so it needs a full kernel build, not the SDK |
-| DSA / per-port control | not yet (mv88e6xxx via platform data, needs a small DSA-core patch for two trees) |
+| LAN1-8 | **working**, per jack, as `lan1`..`lan8` under mainline DSA (mv88e6xxx); a plain two-dumb-switches mode is one command away |
+| GE1 / GE2 (88E1514 behind I354) | **working** (`eth4` = WAN by default, `eth5`) |
+| SFP1 / SFP2 (I354 SerDes, 1 Gbps only) | working (`eth2`, `eth3`) |
+| USB 3 (TI TUSB7340) | working (`patches/220-*`, the controller needs a forced reset on 6.12) |
+| WiFi (Atheros QCA988x mini-PCIe) | working (ath10k-ct) |
+| Front logo RGB LED (PCA9634) | **working** as three OpenWrt LEDs `pca963x:{red,green,blue}:logo`, configurable in LuCI |
+| Fan (EMC2104, Edge 540 only) | **working**: closed loop on the tach, off-at-idle band, tunable in `/etc/config/velo540` |
+| TCO watchdog | working |
+| Serial console | ttyS1, 115200 (the RJ45 console jack) |
+| PoE | not populated on the tested units (no LTC4266 answers on any bus with its reset released); the control lines exist on PCA9557@0x1c pins 0/1 |
+| Mini-PCIe slots | no USB on any slot: cellular modems must be USB devices |
 
-Hardware facts come from the vendor's GPL tree (`vendor-patches-3.14/`, mirror
-of the dead `bitbucket.org/velocloud/openwrt`):
+## Installing on a stock Velo
 
-| I354 function | wired to |
-|---|---|
-| 0000:00:14.0 | 88E6176 switch A, port 4 SerDes; switch SMI on the function's own MDIO pins |
-| 0000:00:14.1 | 88E6176 switch B, same |
-| 0000:00:14.2 | 88E1514 PHY (WAN0 RJ45) on a GPIO bit-bang MDIO bus, PHY addr 0 |
-| 0000:00:14.3 | 88E1514 PHY (WAN1 RJ45), same bus, PHY addr 1 |
+1. Write the stick image to a USB stick (macOS shown; on Linux use `dd`):
+   ```sh
+   gunzip -c openwrt-velo5x0-stick.img.gz | sudo dd of=/dev/rdiskN bs=4m
+   ```
+2. Plug the stick into a **USB 2** socket (the black one; the blue USB 3
+   sockets are dead until the OS is up), connect the console (115200) or a
+   laptop on any LAN jack, power on and pick the stick in the SeaBIOS boot
+   menu (it sometimes needs a second Ctrl-Alt-Del before the stick is listed).
+3. Log in (`root`, no password) at 192.168.1.1 or on the console and write
+   the internal disk (the 7.6 GB USB disk, `sdb` when booted from the stick):
+   ```sh
+   wget -O /tmp/img.gz https://github.com/gallops-gannets/velo540openwrt/releases/download/kernel-N/openwrt-velo540-kernelbuild-ext4-combined.img.gz
+   gunzip -c /tmp/img.gz | dd of=/dev/sdb bs=1M conv=fsync
+   ```
+   Then power off, remove the stick, power on.  Don't pull the stick while
+   the box runs from it.
+4. First boot: `velo540-dsa enable && reboot` for per-jack ports,
+   `passwd`, and whatever else you need (Tailscale, WiFi, witness).
 
-Each switch: ports 0-3 = LAN RJ45, 4 = CPU link, 5/6 = RGMII cross-links.
+Later updates: `sysupgrade -v <image>.img.gz` from the running box keeps the
+configuration.  Run it on the console or a foreground SSH session, not
+backgrounded.
 
-## What is built
+## Configuration knobs (all in `/etc/config/velo540`, kept across sysupgrade)
 
-* `patches/200-igb-velocloud-edge5x0.patch` - igb: detect the board (NVM words
-  6/7 = "Vc"/"5X"), forced 1000/full SGMII link with no PHY on functions 0/1
-  and export their MDIO master as `mii_bus` `igb-vc-0000:00:14.{0,1}`,
-  route PHY access on functions 2/3 to the external bus named by module
-  parameter `vc_ext_mdio` (default `gpio-0`).
-* `package/velo540-glue/src/vc-edge5x0-mdio.c` - registers `mdio-gpio` on SoC GPIO 13/14 (rev B)
-  or 11/12 (rev A) via `gpio-ich`, giving the bus the 88E1514s live on.
-* `patches/210-mdio-gpio-clear-level-before-input.patch` - gpio-ich on Avoton
-  caches output levels and ORs them into reads; without this every odd PHY
-  register on the bit-bang bus reads 0xffff.
-* `files/etc/init.d/velo540-switch` - runs at boot: SerDes/PHY/port-state
-  setup on both switches, PCA9557 reset pulse for the 88E1514s, re-probe of
-  the WAN NICs.  Also the place to look for the register sequence.
-* `files/etc/inittab`, `files/etc/uci-defaults/50-velo540-network` - shell on
-  ttyS1; eth0+eth1 in the LAN bridge, SFP1 as WAN.
-* `scripts/build.sh` - SDK build of the modules + ImageBuilder image with the
-  modules overlaid and extra packages, grub console on ttyS1 with
-  `acpi_enforce_resources=lax`, unique MBR disk signature (the internal disk
-  usually carries the stock one and the kernel would mount the wrong rootfs).
+* **Switch mode**: `velo540-dsa enable|disable|status`.  DSA mode names the
+  jacks `lan1`..`lan8` (measured map: LAN1=B1 LAN2=B0 LAN3=B3 LAN4=B2
+  LAN5=A2 LAN6=A0 LAN7=A1 LAN8=A3; A = 00:14.0/eth0, B = 00:14.1/eth1).
+  Unmanaged mode gives two 4-port dumb switches on `eth0` (LAN5-8) and `eth1`
+  (LAN1-4).  Applied at boot by `velo540-switch` writing the glue module's
+  `dsa_mask` parameter.
+* **Fan** (`config fan`): `min_rpm`/`max_rpm` targets between `t_min` and
+  `t_max`, `off_below`/`on_above` for an off-at-idle band, `tach auto|0`,
+  `min_duty` for 2-wire fans.  The stock Sunon MF50101V1 (3-wire, voltage
+  controlled by the board) cannot run below ~2700 RPM; a quiet replacement is
+  the only way to a silent 540.  Fanless 520s skip the service.
+* **Bad RAM pages** (`config memmap`, `list reserve '4K$0x...'`): re-applied
+  to grub.cfg every boot by `velo540-memmap` (one tested 540 has a single
+  weak cell that logs corrected ECC machine-checks).
+* **Witness** (`config witness`): `list target 'name=ip'`, `period`, `fails`,
+  `ntfy_url`, `pushover_token`/`pushover_user`.  Logs state changes, pages on
+  down/recovered, lights the red logo LED while anything is down.
+* **LEDs**: standard OpenWrt LED config (`/etc/config/system`); defaults are
+  green on, blue = WAN activity, red reserved for the witness.
 
-The image also carries ModemManager, the QMI/MBIM/serial-option USB drivers
-and mwan3 for a Quectel mini-PCIe LTE module with WAN failover (uqmi is no
-longer in the 25.12 repositories), plus LuCI with the ModemManager and mwan3 pages, and the ath10k driver +
-QCA988x firmware + wpad for the onboard Atheros WiFi card (168c:003c).
+Notes: `tailscale0` belongs in the `lan` firewall zone (fw4 rejects tunnel
+traffic otherwise); mwan3 must stay disabled until a second WAN exists (its
+policy rules preempt Tailscale's table 52, and stopping it empties that
+table: restart tailscaled).  A `tailscale` mwan3 rule is pre-seeded.
 
-GitHub Actions runs `scripts/build.sh` on every push and attaches the results
-to a release named `build-<n>`: the image, the two `.ko` files, and `build.log`.
+## What the patches and glue do
 
-## Using an image
+* `patches/200-igb-velocloud-edge5x0.patch`: igb detects the board (NVM
+  words 6/7 = "Vc"/"5X"), forces the 1000/full SGMII link with no PHY on
+  functions 0/1 and exports their MDIO masters as `igb-vc-0000:00:14.{0,1}`,
+  and routes PHY access on functions 2/3 to the external bit-bang bus.
+* `patches/210-mdio-gpio-clear-level-before-input.patch`: gpio-ich on Avoton
+  ORs cached output levels into reads; drive the line low before turnaround.
+* `patches/220-xhci-ti-tusb73x0-force-hcrst.patch`: force HCRST when the
+  TUSB7340 refuses to halt.
+* `patches/230-dsa-pdata-own-tree.patch`: let each platform-data DSA switch
+  have its own tree, so both 88E6176 register.
+* `package/velo540-glue`: two out-of-tree modules.  `vc-edge5x0-mdio`
+  sets the GPIO mux bits, registers the bit-bang MDIO bus (SoC GPIO 13/14 rev
+  B, 11/12 rev A) and the board I2C bus (GPIO 11/12, adapter `i2c-9`) that
+  carries the PCA9557 expanders, EMC2104, PCA9634 and EEPROM, and hands the
+  PCA9634 to `leds-pca963x` through software nodes.  `vc-edge5x0-dsa` creates
+  the mv88e6xxx platform-data devices on the igb-vc buses (`dsa_mask`
+  writable at runtime).
+* `files/etc/init.d/velo540-switch`: at boot, brings the switch CPU SerDes
+  links up (and, in unmanaged mode, PHYs and forwarding), resets the 88E1514s
+  through PCA9557@0x18 and re-probes their igb functions, sets the WAN PHY
+  LEDs, puts the fan controller in PWM mode and enables the logo LED outputs.
+* `files/usr/sbin/velo540-fand`, `velo540-witness`, `velo540-dsa`,
+  `files/etc/init.d/velo540-{fan,memmap,witness}`: see above.
 
-```
-gunzip openwrt-25.12.5-x86-64-velo540-ext4-combined.img.gz
-sudo dd if=openwrt-25.12.5-x86-64-velo540-ext4-combined.img of=/dev/rdiskN bs=4m
-```
+Hardware facts come from the vendor's GPL tree (`vendor-patches-3.14/`,
+mirror of the dead `bitbucket.org/velocloud/openwrt`): I354 func 0/1 →
+switch A/B port 4 SerDes, SMI on the function's own MDIO pins, single-chip
+addressing; func 2/3 → 88E1514 at addr 0/1 on the GPIO bus; switch ports
+0-3 = jacks, 4 = CPU, 5/6 = unused RGMII cross-links.
 
-Legacy BIOS boot, console ttyS1 115200 (already set in grub.cfg).  Put the
-stick in a USB **2** port: the USB 3 ports hang off the broken xHCI and Linux
-will not see the stick there (SeaBIOS will).  SeaBIOS often lists the stick
-only on the second boot attempt.  First things to check on the box:
+## Building
 
-```
-dmesg | grep -i "custom link\|igb-vc\|vc-edge5x0"
-mdio igb-vc-0000:00:14.0 raw 0x13 3      # 88E6176 product id, expect 0x176x
-mdio igb-vc-0000:00:14.0 mvls
-i2cdetect -y 0                           # PCA9557 reset expanders at 0x18/0x1c
-```
+`.github/workflows/kernel.yml` (push to the `kernel` branch, or dispatch)
+runs `scripts/kernel-build.sh`: a full OpenWrt v25.12.5 build with the
+patches in `target/linux/x86/patches-6.12`, the glue as a kmod package, the
+`files/` overlay, a 6 GB rootfs, console on ttyS1, `acpi_enforce_resources=lax`,
+and the package set (LuCI, ModemManager, mwan3, Tailscale, python3, ser2net,
+collectd, ath10k, USB serial drivers, i2c/mdio tools).  Results go to a
+`kernel-<n>` release, including the uniquely signed stick image.
 
-## Open items
+`scripts/build.sh` (`build-<n>` releases) is the older SDK + ImageBuilder
+path; its modules do not load on `kernel-N` images (different kernel
+config), so it is only useful against stock release kernels.
 
-1. **USB 3 ports (TI TUSB7340 xHCI).** SeaBIOS leaves the controller running
-   and it ignores the halt request, so 6.12 fails `xhci_gen_setup` with -110.
-   `patches/220-xhci-ti-tusb73x0-force-hcrst.patch` ports the vendor fix
-   (force HCRST when the halt times out) but xhci is built into OpenWrt's x86
-   kernel: applying it needs a full OpenWrt kernel build with the patch in
-   `target/linux/x86/patches-6.12/`, not the SDK.  Low value: USB 2 works,
-   the internal disk is USB 2, only the two blue sockets are affected.
-2. **DSA for the two 88E6176.** Today they are unmanaged 4-port switches
-   behind eth0/eth1.  mainline `mv88e6xxx` can drive them via platform data
-   on the `igb-vc-*` buses (both `dsa_core.ko` and `mv88e6xxx.ko` are modules
-   on x86, so this is SDK-buildable).  Needed:
-   - a glue module creating an `mdio_device` at addr 0 on each bus with
-     `struct dsa_mv88e6xxx_pdata` (compatible "marvell,mv88e6085", ports
-     lan1-4 + cpu on port 4, ports 5/6 unused);
-   - `net/dsa/dsa.c`: platform data hardcodes tree 0 / index 0, so the
-     second switch fails with "tree 0 already setup" (~10 lines);
-   - CPU port link: without a DT node DSA skips phylink for the CPU port and
-     mv88e6xxx leaves port 4 unforced, so the SerDes link never comes up
-     (~30-50 lines in DSA/mv88e6xxx to accept a fixed-link from platform
-     data, or keep forcing port 4 from the init script after DSA setup);
-   - drop the port-state part of `velo540-switch` (DSA owns it).
-   Gains: lan1..lan8 as real interfaces (per-port link, VLANs, stats,
-   hardware bridging inside each switch).  Traffic between the two switches
-   still crosses the CPU unless ports 5/6 are described as DSA links.
-3. **PoE (LTC4266 quad PSE).** Held in shutdown/reset by PCA9557@0x1c pins
-   0/1 and not on the bus scan.  Enabling it is a few register writes (auto
-   mode + detection enable per port) but it puts 48 V on four of the LAN
-   ports and the vendor driver (`vendor-patches-3.14/996-*`, 2500 lines)
-   manages a total current budget.  Not needed here; left alone on purpose.
+All `kernel-N` images share one MBR disk signature; that is why the stick
+image is re-signed, and why a stick and the internal disk must never carry
+the same one (the kernel would mount the wrong rootfs by PARTUUID).
 
-Current port map: LAN1-4/LAN5-8 = two dumb 4-port switches on eth0/eth1
-(LAN1 = switch B port 1); GE1/GE2 = eth4/eth5 (real NICs, 88E1514 PHY);
-SFP1/SFP2 = eth2/eth3 (I350).  Both switch uplinks are in br-lan, so all
-eight LAN ports are one L2 domain; traffic between the two groups crosses
-the CPU.
+## Not done / ideas
 
-## Fan
-
-The EMC2104 gets no tach from this fan, and its output feeds a supply
-regulator rather than a PWM pin, so the vendor's RPM lookup table just
-re-kicks the fan every ~15 s.  `velo540-fand` runs the chip open-loop at
-26 kHz with PCA9557@0x1c FORCE_PWM low / FORCE_12V high (the only pin state
-where the duty has an effect) and sets the duty from the hottest sensor.
-Measured with a microphone (high-passed level, ambient -80 dB): duty below
-0x0b stalls and auto-restarts (cycling), 0x0b-0x0c is the quietest steady
-point (-74 dB), full speed is -67 dB.  The default floor is therefore 12
-(4.7 %); tune `min`, `t_min`, `t_max` in `/etc/config/velo540`.
-
-Jack to switch-port map (measured): LAN1=B1 LAN2=B0 LAN3=B3 LAN4=B2 LAN5=A2 LAN6=A0 LAN7=A1 LAN8=A3
-(A = switch on 00:14.0 / eth0, B = switch on 00:14.1 / eth1).  DSA mode names the jacks
-`lan1`..`lan8`; enable it with `velo540-dsa enable` (needs the `kernel-N` image with
-patches/230 for both switches) and go back with `velo540-dsa disable`.
-
-## Tailscale and mwan3
-
-`tailscale up --hostname=velo540 --advertise-routes=192.168.1.0/24`; the
-`tailscale0` device is in the `lan` firewall zone (otherwise fw4's default
-`input REJECT` drops everything arriving over the tunnel).  mwan3 is
-installed for the future cellular failover but **disabled until a second
-WAN exists**: its policy-routing rules (priorities 1001-3001) sit ahead of
-Tailscale's table 52 and send replies to 100.x out the WAN, and stopping it
-also wiped table 52 (restart tailscaled to rebuild it).  A `tailscale`
-mwan3 rule (dest 100.64.0.0/10, policy `default`) is already in
-/etc/config/mwan3 for when it is turned back on.
-
-Note: every `kernel-N` image carries the same MBR disk signature (ef45a064), so a
-rescue stick written from one must be re-signed (4 bytes at offset 440 plus the
-matching PARTUUID in grub.cfg) or the kernel may mount the internal disk's rootfs
-instead; the `build-N` images get a random signature per build.
-
-## Per-unit RAM page reservation
-
-This unit logs corrected ECC machine-checks (bank 5, memory controller) at one
-physical address, so `/etc/init.d/velo540-memmap` re-applies a `memmap=`
-reservation to grub.cfg at every boot from `/etc/config/velo540`, which
-sysupgrade preserves (grub.cfg is not).  To reserve a page:
-
-```sh
-uci add_list velo540.@memmap[0].reserve='4K$0x21bb4a000'   # page containing the MCE ADDR
-uci commit velo540 && /etc/init.d/velo540-memmap start && reboot
-```
-
-Note: modules built by the SDK workflow (`build-N`) do not load on the full
-kernel build (`kernel-N`) images: the kernel configs differ, so `struct module`
-sizes mismatch.  Use `kernel-N` for everything now that the box runs it.
-
-## Roadmap: out-of-band management box
-
-Decided 2026-09-08. The box becomes the "witness and hands" for the home
-network: on its own 5G path, on the closet UPS, simple enough to be the last
-thing standing.  Order follows the outage story.
-
-| Phase | Work | Where |
-|---|---|---|
-| 0 | **Build done (2026-09-08):** `kernel-3` is on the internal disk via `sysupgrade` (keeps config and handles the disk signature; run it from the serial console, an SSH drop kills it; a partition-layout change means a ~15 min full-image write). 6 GB rootfs, python3, tailscale, ser2net, collectd + LuCI statistics, curl, USB-serial kmods, picocom. Soak test running; one corrected memory-controller MCE seen so far, watching for recurrence | build + box |
-| 1 | Reachability: 5G (RM520N-GL on Waveshare dongle, or the Mudi 7 on GE2 as interim WAN), mwan3 failover, Tailscale | config |
-| 2 | Witness: probe script (WAN, router, Tower, living-room switch + devices, AP, UPS shell) pushing to Pushover/ntfy directly; offline copy of NetBox export, runbooks, router snapshots served by uhttpd | scripts |
-| 3 | Hands: ser2net consoles (router + Tower), router power via PoE (LTC4266, `vendor-patches-3.14/996-*`) or USB relay, TFTP/PXE recovery image for the router | scripts + PoE bring-up |
-| 4 | **Working (2026-09-09):** both 88E6176 under mainline mv88e6xxx via platform data (`vc-edge5x0-dsa` + patches/230), jacks appear as `lan1`..`lan8` with per-port link/stats/VLANs; `velo540-dsa enable` switches modes (uci `velo540.dsa.mask`, applied at boot by velo540-switch; verified unattended on `kernel-10`) | done |
-| 5 | Maintenance WiFi (ath10k is in the image), front LED as an OpenWrt LED via leds-pca963x swnode | config + glue |
-
-Hardware facts learned the hard way: none of the three mini-PCIe slots (J7,
-J9, J31) carries USB, so cellular must be a USB device; J6 and the header by
-J9 are button headers (reset / power-off), not option jumpers; the EP06-A is
-mini-PCIe and does not fit M.2 adapters.
+* PoE (no PSE found on these units).
+* PXE/TFTP server for recovering other machines from the closet.
+* ser2net consoles for other devices (packages are in the image, nothing attached yet).
+* Cellular failover: ModemManager, mwan3 and the QMI/MBIM drivers are in the
+  image; a USB modem (e.g. RM520N-GL in a USB carrier) is the plan, since no
+  mini-PCIe slot has USB.
+* Replacement fan for the 540: Sunon MF50101V3-1000U-G99 or any quiet 50x10 mm
+  12 V 2- or 3-wire fan, spliced onto the existing connector.
