@@ -45,6 +45,16 @@ make -j"$(nproc)" download >/dev/null
 make -j"$(nproc)" || make -j1 V=s
 ls -la bin/targets/x86/64/
 cp bin/targets/x86/64/*ext4-combined.img.gz "$OUT/openwrt-velo540-kernelbuild-ext4-combined.img.gz"
+# Stick variant: same image with a random MBR disk signature (and matching
+# PARTUUID in grub.cfg), so a rescue/install stick never collides with the
+# signature already on a box's internal disk.
+STICK="$OUT/openwrt-velo5x0-stick.img"; gunzip -c "$OUT/openwrt-velo540-kernelbuild-ext4-combined.img.gz" > "$STICK"
+OLD=$(xxd -s 440 -l 4 -p "$STICK"); OLDLE="${OLD:6:2}${OLD:4:2}${OLD:2:2}${OLD:0:2}"
+NEW=$(printf '%08x' $(( (RANDOM << 16 | RANDOM) & 0xffffffff ))); NEWLE="${NEW:6:2}${NEW:4:2}${NEW:2:2}${NEW:0:2}"
+printf "$(printf '\\x%s' ${NEW:0:2} ${NEW:2:2} ${NEW:4:2} ${NEW:6:2})" | dd of="$STICK" bs=1 seek=440 count=4 conv=notrunc 2>/dev/null
+LC_ALL=C sed -i "s/$OLDLE-02/$NEWLE-02/g" "$STICK"
+echo "== stick image: signature $OLD -> $NEW, grub refs $(LC_ALL=C grep -c -a "$NEWLE-02" "$STICK")"
+gzip -9 -f "$STICK"
 cp bin/targets/x86/64/*.manifest "$OUT/" 2>/dev/null || true
 cp bin/targets/x86/64/kernel-debug.tar.zst "$OUT/" 2>/dev/null || true
 (cd "$OUT" && sha256sum * > sha256sums)
