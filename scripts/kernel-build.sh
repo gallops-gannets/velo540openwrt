@@ -51,7 +51,7 @@ cp bin/targets/x86/64/*ext4-combined.img.gz "$OUT/openwrt-velo540-kernelbuild-ex
 # already in $OUT.  The raw file stays out of $OUT (release upload limit).
 (
 	set -e
-	STICK="$WORK/openwrt-velo5x0-stick.img"; gunzip -c "$OUT/openwrt-velo540-kernelbuild-ext4-combined.img.gz" > "$STICK"
+	STICK="$(mktemp -d)/openwrt-velo5x0-stick.img"; gunzip -c "$OUT/openwrt-velo540-kernelbuild-ext4-combined.img.gz" > "$STICK"
 	OLD=$(od -An -tx1 -j440 -N4 "$STICK" | tr -d ' \n'); OLDLE="${OLD:6:2}${OLD:4:2}${OLD:2:2}${OLD:0:2}"
 	NEW=$(printf '%08x' $(( (RANDOM << 16 | RANDOM) & 0xffffffff ))); NEWLE="${NEW:6:2}${NEW:4:2}${NEW:2:2}${NEW:0:2}"
 	printf "$(printf '\\x%s' ${NEW:0:2} ${NEW:2:2} ${NEW:4:2} ${NEW:6:2})" | dd of="$STICK" bs=1 seek=440 count=4 conv=notrunc 2>/dev/null
