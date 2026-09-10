@@ -17,3 +17,12 @@ config fan
 # dsa: 0 = two dumb switches (eth0/eth1), 3 = DSA for both (lan1..lan8); see velo540-dsa
 config dsa
 	option mask '0'
+
+# witness: reachability probes + paging (see velo540-witness); fill in a token to page
+config witness
+	option period '30'
+	option fails '3'
+	option pushover_token ''
+	option pushover_user ''
+	option ntfy_url ''
+	list target 'internet=1.1.1.1'
