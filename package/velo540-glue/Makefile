@@ -9,7 +9,7 @@ include $(INCLUDE_DIR)/package.mk
 define KernelPackage/velo540-glue
   SUBMENU:=Other modules
   TITLE:=VeloCloud Edge 5x0 board glue (GPIO MDIO/I2C buses, DSA switches)
-  DEPENDS:=@TARGET_x86 +kmod-mdio-gpio +kmod-i2c-gpio +kmod-gpio-pca953x +kmod-dsa-mv88e6xxx
+  DEPENDS:=@TARGET_x86 +kmod-mdio-gpio +kmod-i2c-gpio +kmod-gpio-pca953x +kmod-dsa-mv88e6xxx +kmod-leds-pca963x
   FILES:=$(PKG_BUILD_DIR)/vc-edge5x0-mdio.ko $(PKG_BUILD_DIR)/vc-edge5x0-dsa.ko
   AUTOLOAD:=$(call AutoLoad,30,vc-edge5x0-mdio,1) $(call AutoLoad,42,tag_dsa vc-edge5x0-dsa,1)
 endef

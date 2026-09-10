@@ -16,4 +16,27 @@ set network.wan.device='eth4'
 set network.wan6.device='eth4'
 UCI
 uci commit network
+# front logo LED defaults (leds-pca963x via the glue): green steady = up,
+# blue flickers with WAN traffic, red reserved for alarms (see velo540-witness)
+if ! uci -q get system.led_logo_green >/dev/null; then
+	uci -q batch <<'UCI'
+set system.led_logo_green=led
+set system.led_logo_green.name='logo green'
+set system.led_logo_green.sysfs='green:logo'
+set system.led_logo_green.trigger='default-on'
+set system.led_logo_blue=led
+set system.led_logo_blue.name='logo blue (WAN activity)'
+set system.led_logo_blue.sysfs='blue:logo'
+set system.led_logo_blue.trigger='netdev'
+set system.led_logo_blue.dev='eth4'
+add_list system.led_logo_blue.mode='tx'
+add_list system.led_logo_blue.mode='rx'
+set system.led_logo_red=led
+set system.led_logo_red.name='logo red'
+set system.led_logo_red.sysfs='red:logo'
+set system.led_logo_red.trigger='none'
+set system.led_logo_red.default='0'
+UCI
+	uci commit system
+fi
 exit 0

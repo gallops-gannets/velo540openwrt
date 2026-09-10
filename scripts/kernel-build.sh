@@ -35,7 +35,7 @@ for p in kmod-igb kmod-itco-wdt kmod-i2c-i801 kmod-gpio-pca953x kmod-mdio-gpio k
 	 kmod-ath10k-ct ath10k-firmware-qca988x-ct wpad-basic-mbedtls iw \
 	 python3 tailscale ser2net collectd collectd-mod-cpu collectd-mod-memory collectd-mod-load collectd-mod-interface \
 	 collectd-mod-ping collectd-mod-thermal collectd-mod-uptime collectd-mod-exec luci-app-statistics \
-	 curl kmod-usb-serial-ftdi kmod-usb-serial-cp210x kmod-usb-serial-pl2303 kmod-usb-serial-ch341 picocom; do
+	 curl kmod-usb-serial-ftdi kmod-usb-serial-cp210x kmod-usb-serial-pl2303 kmod-usb-serial-ch341 picocom kmod-leds-pca963x; do
 	echo "CONFIG_PACKAGE_$p=y" >> .config
 done
 make defconfig >/dev/null

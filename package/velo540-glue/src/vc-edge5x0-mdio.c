@@ -22,6 +22,8 @@
 #include <linux/dmi.h>
 #include <linux/pci.h>
 #include <linux/io.h>
+#include <linux/i2c.h>
+#include <linux/property.h>
 
 /* Atom C2000 LPC bridge: GPIO base address register and core-well
  * GPIO_USE_SEL.  coreboot leaves the MDC/MDIO pins in native-function
@@ -83,6 +85,35 @@ static struct gpiod_lookup_table vc_i2c_gpios = {
 };
 static struct platform_device *vc_i2c_pdev;
 
+/* Front logo RGB LED: PCA9634 at 0x54 on the same bus, channels 0/1/2 = R/G/B,
+ * totem-pole outputs, inverted (LEDs are active low), output enable on SoC
+ * GPIO 39 (gpio-ich line 551, active low; the init script drives it).
+ * Described to the mainline leds-pca963x driver with software nodes, so the
+ * three colours show up as /sys/class/leds/{red,green,blue}:logo.
+ */
+static const struct property_entry vc_led_props[] = {
+	PROPERTY_ENTRY_BOOL("nxp,totem-pole"),
+	PROPERTY_ENTRY_BOOL("nxp,inverted-out"),
+	{ }
+};
+static const struct software_node vc_led_node = { .name = "pca9634", .properties = vc_led_props };
+#define VC_LED(n, idx, lbl, trig) \
+	static const struct property_entry vc_led_##n##_props[] = { \
+		PROPERTY_ENTRY_U32("reg", idx), PROPERTY_ENTRY_STRING("label", lbl), \
+		PROPERTY_ENTRY_STRING("linux,default-trigger", trig), { } }; \
+	static const struct software_node vc_led_##n##_node = { \
+		.name = "led-" #idx, .parent = &vc_led_node, .properties = vc_led_##n##_props }
+VC_LED(red, 0, "red:logo", "none");
+VC_LED(green, 1, "green:logo", "default-on");
+VC_LED(blue, 2, "blue:logo", "none");
+static const struct software_node *vc_led_nodes[] = {
+	&vc_led_node, &vc_led_red_node, &vc_led_green_node, &vc_led_blue_node, NULL
+};
+static struct i2c_board_info vc_led_info = {
+	I2C_BOARD_INFO("pca9634", 0x54),
+	.swnode = &vc_led_node,
+};
+
 static int __init vc_mdio_init(void)
 {
 	const char *board = dmi_get_system_info(DMI_BOARD_NAME);
@@ -101,6 +132,10 @@ static int __init vc_mdio_init(void)
 			BIT(vc_i2c_gpios.table[0].chip_hwnum) |
 			BIT(vc_i2c_gpios.table[1].chip_hwnum));
 
+	/* board info must be registered before the adapter appears */
+	if (software_node_register_node_group(vc_led_nodes) == 0 &&
+	    i2c_register_board_info(VC_I2C_BUS_NR, &vc_led_info, 1))
+		pr_warn("vc-edge5x0-mdio: logo LED board info registration failed\n");
 	gpiod_add_lookup_table(&vc_i2c_gpios);
 	vc_i2c_pdev = platform_device_register_simple("i2c-gpio", VC_I2C_BUS_NR, NULL, 0);
 	if (IS_ERR(vc_i2c_pdev))
@@ -125,6 +160,7 @@ static void __exit vc_mdio_exit(void)
 	if (!IS_ERR_OR_NULL(vc_i2c_pdev))
 		platform_device_unregister(vc_i2c_pdev);
 	gpiod_remove_lookup_table(&vc_i2c_gpios);
+	software_node_unregister_node_group(vc_led_nodes);
 }
 
 module_init(vc_mdio_init);
