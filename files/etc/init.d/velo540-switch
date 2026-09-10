@@ -151,7 +151,7 @@ fan_up() {
 }
 
 # Front logo RGB LED: the glue hands the PCA9634 at 0x54 to leds-pca963x
-# (/sys/class/leds/{red,green,blue}:logo, configure in LuCI or /etc/config/system).
+# (/sys/class/leds/pca963x:{red,green,blue}:logo, configure in LuCI or /etc/config/system).
 # coreboot leaves the outputs disabled: enable them (SoC GPIO 39 = gpio-ich 551,
 # active low).
 led_up() {

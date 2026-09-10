@@ -90,7 +90,7 @@ static struct platform_device *vc_i2c_pdev;
  * totem-pole outputs, inverted (LEDs are active low), output enable on SoC
  * GPIO 39 (gpio-ich line 551, active low; the init script drives it).
  * Described to the mainline leds-pca963x driver with software nodes, so the
- * three colours show up as /sys/class/leds/{red,green,blue}:logo.
+ * three colours show up as /sys/class/leds/pca963x:{red,green,blue}:logo.
  */
 static const struct property_entry vc_led_props[] = {
 	PROPERTY_ENTRY_BOOL("nxp,totem-pole"),
