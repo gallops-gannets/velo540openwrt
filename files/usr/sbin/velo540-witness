@@ -1,6 +1,6 @@
 #!/bin/sh
 # VeloCloud Edge 5x0 OOB witness: ping a list of targets, log state changes,
-# page via Pushover or ntfy when configured, and light the blue logo LED while
+# page via Pushover or ntfy when configured, and light the red logo LED while
 # anything is down.  Config in /etc/config/velo540:
 #   config witness
 #       option period '30'                 # seconds between rounds
@@ -14,7 +14,7 @@ period=$(u period 30); fails=$(u fails 3)
 pt=$(u pushover_token ""); pu=$(u pushover_user ""); ntfy=$(u ntfy_url "")
 targets=$(uci -q get velo540.@witness[0].target)
 [ -n "$targets" ] || { logger -t velo540-witness "no targets configured"; exit 0; }
-LED=/sys/class/leds/pca963x:blue:logo/brightness
+LED=/sys/class/leds/pca963x:red:logo/brightness
 page() {	# $1 = title, $2 = message
 	logger -t velo540-witness "$1: $2"
 	[ -n "$pt" ] && [ -n "$pu" ] && curl -s -m 10 -F "token=$pt" -F "user=$pu" -F "title=$1" -F "message=$2" https://api.pushover.net/1/messages.json >/dev/null 2>&1

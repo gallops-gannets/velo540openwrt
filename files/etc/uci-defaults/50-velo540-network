@@ -17,7 +17,7 @@ set network.wan6.device='eth4'
 UCI
 uci commit network
 # front logo LED defaults (leds-pca963x via the glue): green steady = all good,
-# blue = the witness sees something down, red = running on cellular
+# red = the witness sees something down, blue = running on cellular
 if ! uci -q get system.led_logo_green >/dev/null; then
 	uci -q batch <<'UCI'
 set system.led_logo_green=led

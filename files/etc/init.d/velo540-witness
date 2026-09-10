@@ -1,5 +1,5 @@
 #!/bin/sh /etc/rc.common
-# OOB witness: reachability probes, paging, blue logo LED on failure
+# OOB witness: reachability probes, paging, red logo LED on failure
 START=99
 USE_PROCD=1
 start_service() {
