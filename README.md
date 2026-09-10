@@ -72,7 +72,7 @@ backgrounded.
   `ntfy_url`, `pushover_token`/`pushover_user`.  Logs state changes, pages on
   down/recovered, lights the red logo LED while anything is down.
 * **LEDs**: standard OpenWrt LED config (`/etc/config/system`); defaults are
-  green on, blue = WAN activity, red reserved for the witness.
+  green steady = all good, red = the witness sees something down, blue off (reserved).
 
 Notes: `tailscale0` belongs in the `lan` firewall zone (fw4 rejects tunnel
 traffic otherwise); mwan3 must stay disabled until a second WAN exists (its
