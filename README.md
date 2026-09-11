@@ -73,6 +73,9 @@ backgrounded.
   down/recovered, lights the red logo LED while anything is down.
 * **WiFi**: off by default; `velo540-wifi on|off|status`, and the failover hook
   brings it up while running on cellular.
+* **Status JSON** for dashboards: `http://<box>/cgi-bin/status.json` (temps, fan,
+  WAN/cellular, witness states, WiFi, LEDs); served on the LAN and Tailscale, and
+  to the home LAN through firewall rule `velo_status_lan` if you add one.
 * **LEDs**: standard OpenWrt LED config (`/etc/config/system`); defaults are
   green steady = all good, red = the witness sees something down, blue = running on cellular (hotplug hook, WAN down and `wwan`/`cellular` up).
 

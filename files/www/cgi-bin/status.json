@@ -1,0 +1,12 @@
+#!/bin/sh
+# velo5x0 status for the incident dashboard (LAN/Tailscale only; WAN zone blocks it)
+echo "Content-Type: application/json"; echo
+G() { i2cget -y 9 0x2f $1 2>/dev/null; }
+. /lib/functions/network.sh
+wan=0; network_is_up wan && wan=1; cell=0; for i in wwan cellular; do network_is_up $i && cell=1; done
+network_get_ipaddr wanip wan
+wit=""; for f in /tmp/velo540-witness/*.state; do [ -e "$f" ] || continue; n=$(basename $f .state); wit="$wit\"$n\":\"$(cat $f)\","; done
+t=$(( $(printf %d "$(G 0x4e)" 2>/dev/null) * 256 + $(printf %d "$(G 0x4f)" 2>/dev/null) )); [ $t -ge 65528 ] && rpm=0 || rpm=$(( 3932160 / (t >> 3) ))
+core=""; for h in /sys/class/hwmon/hwmon*; do [ "$(cat $h/name)" = coretemp ] && core=$(( $(cat $h/temp2_input 2>/dev/null || cat $h/temp1_input) / 1000 )); done
+printf "{\"host\":\"%s\",\"uptime\":%s,\"load\":\"%s\",\"temp_cpu\":%d,\"temp_board\":%d,\"temp_core\":%s,\"fan_rpm\":%d,\"fan_duty\":%d,\"wan_up\":%d,\"wan_ip\":\"%s\",\"cellular\":%d,\"wifi\":\"%s\",\"dsa\":\"%s\",\"leds\":{\"green\":%s,\"red\":%s,\"blue\":%s},\"witness\":{%s\"_\":\"\"},\"ts\":\"%s\"}\n" \
+ "$(cat /proc/sys/kernel/hostname)" "$(cut -d. -f1 /proc/uptime)" "$(cut -d\  -f1 /proc/loadavg)" "$(printf %d "$(G 0x02)")" "$(printf %d "$(G 0x00)")" "${core:-null}" "$rpm" "$(printf %d "$(G 0x40)")" "$wan" "$wanip" "$cell" "$(velo540-wifi status 2>/dev/null | cut -d" " -f2)" "$(cat /sys/module/vc_edge5x0_dsa/parameters/dsa_mask 2>/dev/null)" "$(cat /sys/class/leds/pca963x:green:logo/brightness)" "$(cat /sys/class/leds/pca963x:red:logo/brightness)" "$(cat /sys/class/leds/pca963x:blue:logo/brightness)" "$wit" "$(tailscale ip -4 2>/dev/null)"
