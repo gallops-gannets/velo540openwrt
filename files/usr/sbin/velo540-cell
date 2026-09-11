@@ -1,0 +1,40 @@
+#!/bin/sh
+# velo540-cell status|restart|test start|test stop|bandlock on|off
+# Cellular failover controls for the OOB box (ModemManager modem on USB,
+# interface named wwan).  Everything degrades to "no modem" until one is fitted.
+# Band lock list lives in /etc/config/velo540:  config cell / list bands 'n41' ...
+MARK=/tmp/velo540-test-outage
+modem() { mmcli -L 2>/dev/null | grep -o '/Modem/[0-9]*' | head -1 | tr -dc 0-9; }
+kv() { mmcli -m "$1" --output-keyv 2>/dev/null; }
+case "$1" in
+status)
+	m=$(modem); . /lib/functions/network.sh
+	if [ -n "$m" ]; then
+		k=$(kv $m); st=$(echo "$k" | sed -n 's/^modem.generic.state *: *//p'); op=$(echo "$k" | sed -n 's/^modem.3gpp.operator-name *: *//p'); sig=$(echo "$k" | sed -n 's/^modem.generic.signal-quality.value *: *//p'); tech=$(echo "$k" | sed -n 's/^modem.generic.access-technologies.value\[1\] *: *//p'); bands=$(echo "$k" | grep -c 'modem.generic.current-bands.value')
+		printf 'modem=present state=%s operator="%s" signal=%s tech=%s bands=%s\n' "$st" "$op" "$sig" "$tech" "$bands"
+	else echo "modem=none"; fi
+	up=0; for i in wwan cellular; do network_is_up $i && up=1; done; echo "wwan_up=$up"
+	echo "test_outage=$([ -e $MARK ] && echo 1 || echo 0)"
+	echo "bandlock=$(uci -q get velo540.@cell[0].locked || echo 0) bands=\"$(uci -q get velo540.@cell[0].bands | tr ' ' ,)\"";;
+restart)
+	m=$(modem); [ -n "$m" ] || { echo "no modem"; exit 1; }
+	mmcli -m $m -r >/dev/null 2>&1 || /etc/init.d/modemmanager restart; ifup wwan 2>/dev/null; echo "modem reset";;
+test)
+	case "$2" in
+	start)	[ -e $MARK ] && { echo "test already running"; exit 0; }
+		date +%s > $MARK; ifdown wan
+		setsid sh -c "sleep 300; [ -e $MARK ] && { ifup wan; rm -f $MARK; logger -t velo540-cell 'failover test auto-cleared after 5 min'; }" >/dev/null 2>&1 &
+		logger -t velo540-cell "failover test: primary WAN down for up to 5 min"; echo "test started: primary WAN down, auto-clears in 5 min";;
+	stop)	rm -f $MARK; ifup wan; logger -t velo540-cell "failover test stopped"; echo "test stopped: primary WAN back";;
+	*) echo "usage: velo540-cell test start|stop"; exit 1;;
+	esac;;
+bandlock)
+	m=$(modem); [ -n "$m" ] || { echo "no modem"; exit 1; }
+	case "$2" in
+	on)	b=$(uci -q get velo540.@cell[0].bands | tr ' ' '|'); [ -n "$b" ] || { echo "no bands configured (uci velo540.@cell[0].bands)"; exit 1; }
+		mmcli -m $m --set-current-bands="$b" >/dev/null && { uci set velo540.@cell[0].locked=1; uci commit velo540; echo "band lock on: $b"; };;
+	off)	mmcli -m $m --set-current-bands=any >/dev/null && { uci set velo540.@cell[0].locked=0; uci commit velo540; echo "band lock off"; };;
+	*) echo "usage: velo540-cell bandlock on|off"; exit 1;;
+	esac;;
+*) echo "usage: velo540-cell status|restart|test start|stop|bandlock on|off"; exit 1;;
+esac

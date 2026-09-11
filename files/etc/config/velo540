@@ -26,3 +26,7 @@ config witness
 	option pushover_user ''
 	option ntfy_url ''
 	list target 'internet=1.1.1.1'
+
+# cell: cellular failover (velo540-cell); bands for the optional band lock
+config cell
+	option locked '0'
