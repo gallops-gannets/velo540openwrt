@@ -35,9 +35,9 @@ and the plain image for `sysupgrade`.
    ```
 2. Plug the stick into a **USB 2** socket (the black one; the blue USB 3
    sockets are dead until the OS is up), connect the console (115200) or a
-   laptop on any LAN jack, power on and pick the stick in the SeaBIOS boot
+   laptop on any LAN jack (the box's own network is 10.11.0.0/24), power on and pick the stick in the SeaBIOS boot
    menu (it sometimes needs a second Ctrl-Alt-Del before the stick is listed).
-3. Log in (`root`, no password) at 192.168.1.1 or on the console and write
+3. Log in (`root`, no password) at 10.11.0.1 or on the console and write
    the internal disk (the 7.6 GB USB disk, `sdb` when booted from the stick):
    ```sh
    wget -O /tmp/img.gz https://github.com/gallops-gannets/velo540openwrt/releases/download/kernel-N/openwrt-velo540-kernelbuild-ext4-combined.img.gz
@@ -71,6 +71,8 @@ backgrounded.
 * **Witness** (`config witness`): `list target 'name=ip'`, `period`, `fails`,
   `ntfy_url`, `pushover_token`/`pushover_user`.  Logs state changes, pages on
   down/recovered, lights the red logo LED while anything is down.
+* **WiFi**: off by default; `velo540-wifi on|off|status`, and the failover hook
+  brings it up while running on cellular.
 * **LEDs**: standard OpenWrt LED config (`/etc/config/system`); defaults are
   green steady = all good, red = the witness sees something down, blue = running on cellular (hotplug hook, WAN down and `wwan`/`cellular` up).
 

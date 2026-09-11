@@ -12,6 +12,7 @@ add_list network.@device[0].ports='eth1'
 UCI
 fi
 uci -q batch <<'UCI'
+set network.lan.ipaddr='10.11.0.1'
 set network.wan.device='eth4'
 set network.wan6.device='eth4'
 UCI

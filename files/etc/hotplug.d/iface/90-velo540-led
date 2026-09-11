@@ -1,11 +1,18 @@
 #!/bin/sh
-# Logo LED blue = running on cellular: on whenever the primary WAN is down and a
-# cellular interface (named wwan or cellular) is up.  Evaluated on every
-# interface event.
-LED=/sys/class/leds/pca963x:blue:logo/brightness
-[ -w "$LED" ] || exit 0
+# Failover state, evaluated on every interface event: running on cellular =
+# primary WAN down and a cellular interface (named wwan or cellular) up.
+#   blue logo LED on while on cellular; maintenance WiFi up while on cellular
+#   (and back down when the WAN returns), unless wifi was switched on manually.
 . /lib/functions/network.sh
 wan_up=0; cell_up=0
 network_is_up wan && wan_up=1
 for i in wwan cellular; do network_is_up $i && cell_up=1; done
-if [ $wan_up -eq 0 ] && [ $cell_up -eq 1 ]; then echo 255 > "$LED"; else echo 0 > "$LED"; fi
+LED=/sys/class/leds/pca963x:blue:logo/brightness
+if [ $wan_up -eq 0 ] && [ $cell_up -eq 1 ]; then
+	[ -w "$LED" ] && echo 255 > "$LED"
+	[ "$(uci -q get wireless.radio0.disabled)" = 0 ] || { touch /tmp/velo540-wifi-auto; velo540-wifi on >/dev/null; }
+else
+	[ -w "$LED" ] && echo 0 > "$LED"
+	[ -e /tmp/velo540-wifi-auto ] && { rm -f /tmp/velo540-wifi-auto; velo540-wifi off >/dev/null; }
+fi
+exit 0

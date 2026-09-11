@@ -1,0 +1,9 @@
+#!/bin/sh
+# velo540-wifi on|off|status: maintenance WiFi (normally off; the failover hook
+# turns it on while running on cellular, a dashboard can call this over SSH).
+case "$1" in
+on)  uci set wireless.radio0.disabled=0; uci commit wireless; wifi reload; echo "wifi on";;
+off) uci set wireless.radio0.disabled=1; uci commit wireless; wifi reload; echo "wifi off";;
+status) [ "$(uci -q get wireless.radio0.disabled)" = 0 ] && echo "wifi on ($(iw dev 2>/dev/null | awk '/ssid/{print $2}'))" || echo "wifi off";;
+*) echo "usage: velo540-wifi on|off|status"; exit 1;;
+esac
