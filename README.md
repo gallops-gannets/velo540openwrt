@@ -76,6 +76,13 @@ backgrounded.
 * **Status JSON** for dashboards: `http://<box>/cgi-bin/status.json` (temps, fan,
   WAN/cellular, witness states, WiFi, LEDs); served on the LAN and Tailscale, and
   to the home LAN through firewall rule `velo_status_lan` if you add one.
+* **Cellular** (`config cell`): `velo540-cell status|restart|test start|stop|bandlock on|off`.
+  `ss_disable 1` keeps the modem on USB 2 (the TUSB7340 resets it on SuperSpeed).
+  `velo540-ttl` rewrites TTL/hop-limit to 65 on `wwan0` so forwarded traffic is not
+  classed as tethering.  If the modem never shows an NR carrier, check
+  `AT+QNWPREFCFG="nr5g_band"` on `/dev/ttyUSB3`: one unit shipped locked to n48
+  only; setting the full list (`1:2:3:5:7:8:12:20:25:28:38:40:41:48:66:71:75:76:77:78:79`)
+  is stored in modem NVRAM and gave 5G SA on n41.
 * **LEDs**: standard OpenWrt LED config (`/etc/config/system`); defaults are
   green steady = all good, red = the witness sees something down, blue = running on cellular (hotplug hook, WAN down and `wwan`/`cellular` up).
 
