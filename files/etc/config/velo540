@@ -30,3 +30,4 @@ config witness
 # cell: cellular failover (velo540-cell); bands for the optional band lock
 config cell
 	option locked '0'
+	# option ss_disable '3-0:1.0/usb3-port1'   # force a USB modem onto the USB2 side (see velo540-switch)

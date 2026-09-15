@@ -162,6 +162,12 @@ led_up() {
 
 start() {
 	[ -x /usr/bin/mdio ] || { echo "mdio-tools missing"; return 1; }
+	# USB modem on the TI xHCI: the SuperSpeed link gets reset by the host under
+	# load (RM520N-GL: 12 resets, every connect failed); on the controller's
+	# USB2 side it is clean (104 Mbps, 0 resets).  uci velo540.@cell[0].ss_disable
+	# names the SuperSpeed port to disable, e.g. '3-0:1.0/usb3-port1'.
+	ssd=$(uci -q get velo540.@cell[0].ss_disable)
+	[ -n "$ssd" ] && [ -e "/sys/bus/usb/devices/usb3/$ssd/disable" ] && echo 1 > "/sys/bus/usb/devices/usb3/$ssd/disable" && echo "usb: SuperSpeed disabled on $ssd (modem falls back to USB2)"
 	# DSA mode from /etc/config/velo540: hand the switches to mv88e6xxx now,
 	# so netifd finds lan1..lan8 when it brings br-lan up.
 	P=/sys/module/vc_edge5x0_dsa/parameters/dsa_mask

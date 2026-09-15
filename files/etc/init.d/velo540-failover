@@ -1,0 +1,10 @@
+#!/bin/sh /etc/rc.common
+# Primary-WAN health probe + default-route switch to cellular (see velo540-failover)
+START=98
+USE_PROCD=1
+start_service() {
+	procd_open_instance
+	procd_set_param command /usr/sbin/velo540-failover
+	procd_set_param respawn 3600 10 0
+	procd_close_instance
+}

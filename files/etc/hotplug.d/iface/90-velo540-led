@@ -6,6 +6,7 @@
 . /lib/functions/network.sh
 wan_up=0; cell_up=0
 network_is_up wan && wan_up=1
+[ "$(cat /tmp/velo540-failover.state 2>/dev/null)" = failover ] && wan_up=0
 for i in wwan cellular; do network_is_up $i && cell_up=1; done
 LED=/sys/class/leds/pca963x:blue:logo/brightness
 if [ $wan_up -eq 0 ] && [ $cell_up -eq 1 ]; then

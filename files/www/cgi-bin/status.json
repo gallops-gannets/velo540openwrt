@@ -3,9 +3,9 @@
 echo "Content-Type: application/json"; echo
 G() { i2cget -y 9 0x2f $1 2>/dev/null; }
 . /lib/functions/network.sh
-wan=0; network_is_up wan && wan=1; cell=0; for i in wwan cellular; do network_is_up $i && cell=1; done
+wan=0; network_is_up wan && wan=1; [ "$(cat /tmp/velo540-failover.state 2>/dev/null)" = failover ] && wan=0; cell=0; [ $wan -eq 0 ] && ip -4 addr show wwan0 2>/dev/null | grep -q "inet " && cell=1
 network_get_ipaddr wanip wan
-cell=$(velo540-cell status 2>/dev/null | tr "\n" " " | sed "s/\"/\\\\\"/g")
+cell=$(velo540-cell status 2>/dev/null | tr "\n" " " | tr -d "\"")
 wit=""; for f in /tmp/velo540-witness/*.state; do [ -e "$f" ] || continue; n=$(basename $f .state); wit="$wit\"$n\":\"$(cat $f)\","; done
 t=$(( $(printf %d "$(G 0x4e)" 2>/dev/null) * 256 + $(printf %d "$(G 0x4f)" 2>/dev/null) )); [ $t -ge 65528 ] && rpm=0 || rpm=$(( 3932160 / (t >> 3) ))
 core=""; for h in /sys/class/hwmon/hwmon*; do [ "$(cat $h/name)" = coretemp ] && core=$(( $(cat $h/temp2_input 2>/dev/null || cat $h/temp1_input) / 1000 )); done
