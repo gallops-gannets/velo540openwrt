@@ -10,7 +10,8 @@ case "$1" in
 status)
 	m=$(modem); . /lib/functions/network.sh
 	if [ -n "$m" ]; then
-		k=$(kv $m); st=$(echo "$k" | sed -n 's/^modem.generic.state *: *//p'); op=$(echo "$k" | sed -n 's/^modem.3gpp.operator-name *: *//p'); sig=$(echo "$k" | sed -n 's/^modem.generic.signal-quality.value *: *//p'); tech=$(echo "$k" | sed -n 's/^modem.generic.access-technologies.value\[1\] *: *//p'); bands=$(echo "$k" | grep -c 'modem.generic.current-bands.value')
+		k=$(mmcli -m $m 2>/dev/null | tr -d "\033" | sed "s/\[[0-9;]*m//g"); f() { echo "$k" | grep -m1 "$1:" | sed "s/.*$1: *//" | tr -d "'"; }
+		st=$(f "state"); op=$(f "operator name"); sig=$(f "signal quality" | cut -d" " -f1); tech=$(f "access tech"); bands=$(echo "$k" | grep -c "current:")
 		printf 'modem=present state=%s operator="%s" signal=%s tech=%s bands=%s\n' "$st" "$op" "$sig" "$tech" "$bands"
 	else echo "modem=none"; fi
 	up=0; for i in wwan cellular; do network_is_up $i && up=1; done; echo "wwan_up=$up"
