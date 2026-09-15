@@ -1,0 +1,15 @@
+#!/bin/sh /etc/rc.common
+# Carrier tethering detection works on TTL/hop-limit: traffic the modem's own
+# host originates has TTL 64, forwarded traffic arrives with 63 and is tagged
+# as "hotspot" and throttled/deprioritised.  Rewrite everything leaving wwan0
+# to TTL/HL 65 (the modem decrements once).  Own nft table, so fw4 reloads do
+# not touch it (see home-network-ops CLAUDE.md: never in /etc/nftables.d).
+START=95
+start() {
+	nft list table inet velo_ttl >/dev/null 2>&1 && nft delete table inet velo_ttl
+	nft add table inet velo_ttl
+	nft add chain inet velo_ttl post '{ type filter hook postrouting priority mangle; }'
+	nft add rule inet velo_ttl post oifname "wwan0" ip ttl set 65
+	nft add rule inet velo_ttl post oifname "wwan0" ip6 hoplimit set 65
+}
+stop() { nft delete table inet velo_ttl 2>/dev/null; }
