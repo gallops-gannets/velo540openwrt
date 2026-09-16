@@ -1,0 +1,25 @@
+#!/bin/sh
+# Print, or with -u apply, the sysfs path of the cellular modem.
+#
+# network.wwan.device pins the modem by sysfs path, and that path changes
+# whenever it re-enumerates on a different bus: usb1/1-1 at USB 2, usb3/3-1 at
+# SuperSpeed.  Moving the modem to another socket, or a re-plug that happens to
+# train at the other speed, otherwise leaves netifd unable to find it at all
+# ("couldn't find modem") and the cellular path silently stays down.
+VID=${VID:-2c7c}   # Quectel
+
+for d in /sys/bus/usb/devices/[0-9]*-[0-9]*; do
+	[ "$(cat "$d/idVendor" 2>/dev/null)" = "$VID" ] || continue
+	P=$(readlink -f "$d")
+	break
+done
+[ -n "$P" ] || { echo "no modem with vendor $VID" >&2; exit 1; }
+
+[ "$1" = "-u" ] || { echo "$P"; exit 0; }
+
+CUR=$(uci -q get network.wwan.device)
+[ "$CUR" = "$P" ] && { echo "unchanged: $P"; exit 0; }
+uci set network.wwan.device="$P"
+uci commit network
+echo "network.wwan.device: ${CUR:-unset} -> $P"
+ifup wwan

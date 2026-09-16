@@ -54,7 +54,19 @@ else
 	wait $sampler 2>/dev/null
 	R=$(cat /tmp/.ct.r 2>/dev/null); S=$(cat /tmp/.ct.s 2>/dev/null); Q=$(cat /tmp/.ct.q 2>/dev/null)
 	[ $((e - s)) -gt 0 ] && DL=$(( 450 * 8 * 100 / (e - s) ))
-	UL=$(head -c 20000000 /dev/zero | curl -s -m 70 -4 --interface "$IF" -o /dev/null -w '%{speed_upload}' -X POST --data-binary @- "$UP" | awk '{printf "%.0f", $1*8/1e6}')
+	# Single-stream upload on this link swings 2-30 Mbps run to run while the
+	# parallel figure holds steady, so report the parallel one as the number
+	# that means something, and keep the single-stream one beside it.
+	UL1=$(head -c 20000000 /dev/zero | curl -s -m 70 -4 --interface "$IF" -o /dev/null -w '%{speed_upload}' -X POST --data-binary @- "$UP" | awk '{printf "%.0f", $1*8/1e6}')
+	s=$(up_cs)
+	upids=""
+	for n in 1 2 3 4 5 6; do
+		head -c 20000000 /dev/zero | curl -s -m 70 -4 --interface "$IF" -o /dev/null -X POST --data-binary @- "$UP" &
+		upids="$upids $!"
+	done
+	wait $upids
+	e=$(up_cs)
+	[ $((e - s)) -gt 0 ] && UL=$(( 120 * 8 * 100 / (e - s) ))
 	PG=$(ping -I "$IF" -c5 -W3 1.1.1.1 2>/dev/null | tail -1 | sed 's:.*= ::;s:/.*::')
 	echo "chains RSRP $(f4 "$R") dBm   (under load, all four)"
 	echo "chains SINR $(f4 "$S") dB"
@@ -74,4 +86,4 @@ case "$C" in
 	[ -n "$C" ] && echo "cell   $C"
 	;;
 esac
-[ "$1" = quick ] || echo "speed  down ${DL:-?} Mbps (6 streams)   up ${UL:-?} Mbps   ping ${PG:-?} ms"
+[ "$1" = quick ] || echo "speed  down ${DL:-?} Mbps (6 streams)   up ${UL:-?} Mbps (6 streams, ${UL1:-?} on one)   ping ${PG:-?} ms"
