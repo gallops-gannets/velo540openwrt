@@ -36,6 +36,6 @@ config cell
 # pdu: the iBoot PDU8A-N15 on the OOB LAN (velo540-pdu).  Password lives in
 # /etc/velo540-pdu.secret (mode 600; keep it listed in /etc/sysupgrade.conf).
 config pdu
-	option host 'iboot-pdu.lan'
+	option host '10.11.0.10'
 	# list outlet 'router=1'    # name=number, one per outlet you want to address by name
 	# list outlet 'ont=2'

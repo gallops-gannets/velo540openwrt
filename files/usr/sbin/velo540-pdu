@@ -13,7 +13,7 @@ cycle time (10 s by default).
 Config:
   /etc/velo540-pdu.secret            admin password, mode 600 (NOT preserved by
                                      sysupgrade unless listed in sysupgrade.conf)
-  uci velo540.@pdu[0].host           default iboot-pdu.lan
+  uci velo540.@pdu[0].host           default 10.11.0.10 (the reservation)
   uci velo540.@pdu[0].outlet         list of name=number, e.g. 'router=1'
 
 The velo's own address is whitelisted on the PDU so its fail2ban (3 failures in
@@ -47,14 +47,22 @@ def post(host, path, payload):
     req = urllib.request.Request(
         f"http://{host}{path}", data=json.dumps(payload).encode(),
         headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
-        return json.loads(r.read().decode())
+    try:
+        with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
+            return json.loads(r.read().decode())
+    except (urllib.error.URLError, OSError, ValueError) as e:
+        # A refused connection with ping still answering is the PDU's fail2ban
+        # having banned us: every TCP port closes for 300 s.
+        print(f"cannot reach the PDU at {host}: {e}")
+        sys.exit(1)
 
 
 def main():
     if len(sys.argv) < 2 or sys.argv[1] not in ("status", "on", "off", "cycle"):
         print(__doc__.strip()); return 2
-    host = uci("velo540.@pdu[0].host", "iboot-pdu.lan")
+    # The address, not the .lan name: the box's own resolver points upstream, so
+    # names served by its dnsmasq are not resolvable to its own processes.
+    host = uci("velo540.@pdu[0].host", "10.11.0.10")
     try:
         pw = open(SECRET).read().strip()
     except OSError:
