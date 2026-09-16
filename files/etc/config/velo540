@@ -32,3 +32,10 @@ config cell
 	option locked '0'
 	option ss_lpm_off '3-0:1.0/usb3-port1'   # refuse USB3 U1/U2 so the modem runs at 5 Gbps (see velo540-switch)
 	# option ss_disable '3-0:1.0/usb3-port1'  # fallback: force the modem onto USB2 instead
+
+# pdu: the iBoot PDU8A-N15 on the OOB LAN (velo540-pdu).  Password lives in
+# /etc/velo540-pdu.secret (mode 600; keep it listed in /etc/sysupgrade.conf).
+config pdu
+	option host 'iboot-pdu.lan'
+	# list outlet 'router=1'    # name=number, one per outlet you want to address by name
+	# list outlet 'ont=2'

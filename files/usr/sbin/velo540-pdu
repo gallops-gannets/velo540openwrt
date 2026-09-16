@@ -1,0 +1,92 @@
+#!/usr/bin/env python3
+"""velo540-pdu - control the Dataprobe iBoot PDU8A-N15 on the OOB LAN.
+
+Usage:
+  velo540-pdu status                 all outlets, with names if configured
+  velo540-pdu on|off|cycle <outlet>  outlet number 1-8, or a configured name
+
+Talks to the PDU's REST API (manual section 10): POST /services/auth/ for a
+token, then /services/retrieve/ and /services/control/.  The token lives five
+minutes; we fetch a fresh one every run.  Cycle uses the PDU's own per-outlet
+cycle time (10 s by default).
+
+Config:
+  /etc/velo540-pdu.secret            admin password, mode 600 (NOT preserved by
+                                     sysupgrade unless listed in sysupgrade.conf)
+  uci velo540.@pdu[0].host           default iboot-pdu.lan
+  uci velo540.@pdu[0].outlet         list of name=number, e.g. 'router=1'
+
+The velo's own address is whitelisted on the PDU so its fail2ban (3 failures in
+300 s -> 300 s ban) can never lock this script out; do not remove that entry.
+"""
+import json
+import subprocess
+import sys
+import urllib.request
+
+SECRET = "/etc/velo540-pdu.secret"
+USER = "admin"
+TIMEOUT = 8
+
+
+def uci(key, default=None):
+    r = subprocess.run(["uci", "-q", "get", key], capture_output=True, text=True)
+    return r.stdout.strip() if r.returncode == 0 and r.stdout.strip() else default
+
+
+def names():
+    out = {}
+    for item in (uci("velo540.@pdu[0].outlet", "") or "").split():
+        if "=" in item:
+            n, num = item.split("=", 1)
+            out[n] = num
+    return out
+
+
+def post(host, path, payload):
+    req = urllib.request.Request(
+        f"http://{host}{path}", data=json.dumps(payload).encode(),
+        headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
+        return json.loads(r.read().decode())
+
+
+def main():
+    if len(sys.argv) < 2 or sys.argv[1] not in ("status", "on", "off", "cycle"):
+        print(__doc__.strip()); return 2
+    host = uci("velo540.@pdu[0].host", "iboot-pdu.lan")
+    try:
+        pw = open(SECRET).read().strip()
+    except OSError:
+        print(f"no {SECRET}"); return 1
+    auth = post(host, "/services/auth/", {"username": USER, "password": pw})
+    if auth.get("success") != "true":
+        print("auth failed:", auth.get("message")); return 1
+    tok = auth["token"]
+    nm = names()
+    by_num = {v: k for k, v in nm.items()}
+
+    if sys.argv[1] == "status":
+        r = post(host, "/services/retrieve/", {"token": tok, "outlets": [str(i) for i in range(1, 9)]})
+        if r.get("success") != "true":
+            print("retrieve failed:", r.get("message")); return 1
+        for n in range(1, 9):
+            st = r["outlets"].get(str(n), "?")
+            label = by_num.get(str(n), "")
+            print(f"outlet {n}: {st:<3} {label}")
+        return 0
+
+    if len(sys.argv) < 3:
+        print("which outlet?"); return 2
+    target = nm.get(sys.argv[2], sys.argv[2])
+    if not target.isdigit() or not 1 <= int(target) <= 8:
+        print(f"unknown outlet {sys.argv[2]!r}; names: {', '.join(nm) or 'none'}"); return 2
+    r = post(host, "/services/control/",
+             {"token": tok, "control": "outlet", "command": sys.argv[1], "outlets": [target]})
+    ok = r.get("success") == "true"
+    print(f"{sys.argv[1]} outlet {target} ({by_num.get(target, 'unnamed')}): {'ok' if ok else 'FAILED ' + str(r.get('message'))}")
+    return 0 if ok else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -112,6 +112,12 @@ backgrounded.
   one or two spatial layers get through (measured: SINR -7/8/0/-4, 103 Mbps, against
   440 Mbps from a hotspot in the same spot on the same plan).  SMA extensions, ~15 cm
   spacing and alternating polarisation are the fix.
+* **PDU** (`config pdu`): `velo540-pdu status|on|off|cycle <n|name>` drives a Dataprobe
+  iBoot PDU8A-N15 on the box's LAN over its REST API; password in
+  `/etc/velo540-pdu.secret` (mode 600, list it in `/etc/sysupgrade.conf`), outlet names
+  as `list outlet 'router=1'`.  Two traps: the factory password is `admin` + the last
+  three MAC octets, not `admin`; and its fail2ban (3 failures in 300 s) closes every TCP
+  port for 300 s while ping still answers, so whitelist the box's own address on the PDU.
 * **LEDs**: standard OpenWrt LED config (`/etc/config/system`); defaults are
   green steady = all good, red = the witness sees something down, blue = running on cellular (hotplug hook, WAN down and `wwan`/`cellular` up).
 
