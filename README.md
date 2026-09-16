@@ -83,6 +83,14 @@ backgrounded.
   `AT+QNWPREFCFG="nr5g_band"` on `/dev/ttyUSB3`: one unit shipped locked to n48
   only; setting the full list (`1:2:3:5:7:8:12:20:25:28:38:40:41:48:66:71:75:76:77:78:79`)
   is stored in modem NVRAM and gave 5G SA on n41.
+* **Cellular measurement**: `velo540-celltest` (add `quick` to skip transfers) prints
+  the four receive chains sampled under load, the serving cell and throughput.  Use it
+  to score antenna moves: the chains should land within ~3 dB of each other with SINR
+  above 10 dB.  A 4x4 module with its paddles screwed straight onto the carrier sits
+  ~2 cm apart, well under the 6 cm half-wave at n41, so the chains correlate and only
+  one or two spatial layers get through (measured: SINR -7/8/0/-4, 103 Mbps, against
+  440 Mbps from a hotspot in the same spot on the same plan).  SMA extensions, ~15 cm
+  spacing and alternating polarisation are the fix.
 * **LEDs**: standard OpenWrt LED config (`/etc/config/system`); defaults are
   green steady = all good, red = the witness sees something down, blue = running on cellular (hotplug hook, WAN down and `wwan`/`cellular` up).
 
