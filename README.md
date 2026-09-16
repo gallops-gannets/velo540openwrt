@@ -86,8 +86,15 @@ backgrounded.
   `/etc/uci-defaults/60-velo540-mm-multiplex` teaches netifd's modemmanager proto the
   `multiplex` option and renames the mux link, since netifd reads the dot in `qmapmux0.0`
   as a VLAN tag and refuses it.  Measured on one RM520N-GL on 5G SA n41: 104 Mbps on USB 2
-  unaggregated, 170-295 Mbps with all three.  Note `network.wwan.device` names the modem's
+  unaggregated, 240-290 Mbps with all three.  Note `network.wwan.device` names the modem's
   sysfs path, which changes with the bus it enumerates on (`usb3/3-1`, not `usb1/1-1`).
+  **Caveat, unresolved**: on the tested box the *non*-multiplexed path stopped coming up
+  once multiplexing worked (netifd tears down and never completes a plain connect, 180 s,
+  reproduced twice), so if the proto patch ever fails to apply the result is no cellular
+  rather than slow cellular.  Do not treat plain mode as a working fallback without
+  retesting it.  Upload is also far noisier than download on this link: 2-30 Mbps on a
+  single stream and a steady 13-15 Mbps across six, against 240+ Mbps down, and it tracks
+  which cell the modem is camped on rather than anything configurable here.
   `velo540-ttl` rewrites TTL/hop-limit to 65 on `wwan0` so forwarded traffic is not
   classed as tethering.  If the modem never shows an NR carrier, check
   `AT+QNWPREFCFG="nr5g_band"` on `/dev/ttyUSB3`: one unit shipped locked to n48

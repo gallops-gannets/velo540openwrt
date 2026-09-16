@@ -14,7 +14,12 @@
 # This lives in uci-defaults so it is re-applied after every sysupgrade, since
 # the proto ships in the modemmanager package and is overwritten by it.  If
 # upstream changes the file enough that the patch does not apply, the proto is
-# left alone and the bearer is simply not multiplexed: slower, never broken.
+# left alone and the bearer is not multiplexed.
+#
+# That was meant to be a safe fallback and it is NOT, at least on the tested
+# box: once multiplexing was working, a plain connect stopped completing at all
+# (netifd disables the modem and gives up, 180 s, reproduced twice).  So a
+# failed patch means no cellular, not slow cellular.  Unresolved.
 F=${MM_PROTO:-/lib/netifd/proto/modemmanager.sh}
 [ -f "$F" ] || exit 0
 grep -q 'velo540: multiplex' "$F" && exit 0
