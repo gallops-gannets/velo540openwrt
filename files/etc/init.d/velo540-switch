@@ -162,10 +162,19 @@ led_up() {
 
 start() {
 	[ -x /usr/bin/mdio ] || { echo "mdio-tools missing"; return 1; }
-	# USB modem on the TI xHCI: the SuperSpeed link gets reset by the host under
-	# load (RM520N-GL: 12 resets, every connect failed); on the controller's
-	# USB2 side it is clean (104 Mbps, 0 resets).  uci velo540.@cell[0].ss_disable
-	# names the SuperSpeed port to disable, e.g. '3-0:1.0/usb3-port1'.
+	# USB modem on the TI xHCI.  The SuperSpeed link used to reset constantly
+	# (RM520N-GL: 12 resets, every connect failed), so we forced the modem onto
+	# the USB2 side.  The cause was USB3 link power management: with U1/U2
+	# refused on the port there are 0 resets idle and 0 under load, and the
+	# modem runs at 5 Gbps (119 Mbps down vs 104 on USB2).
+	#
+	# uci velo540.@cell[0].ss_lpm_off names the SuperSpeed port to refuse U1/U2
+	# on, e.g. '3-0:1.0/usb3-port1'.  Set it, and leave ss_disable unset.
+	# ss_disable is still honoured as the fallback if a board turns out to need
+	# it, but note that network.wwan.device must then name the usb1 path: the
+	# modem's sysfs path changes with the bus it enumerates on.
+	sslpm=$(uci -q get velo540.@cell[0].ss_lpm_off)
+	[ -n "$sslpm" ] && [ -w "/sys/bus/usb/devices/usb3/$sslpm/usb3_lpm_permit" ] && echo 0 > "/sys/bus/usb/devices/usb3/$sslpm/usb3_lpm_permit" && echo "usb: U1/U2 refused on $sslpm (SuperSpeed stays up)"
 	ssd=$(uci -q get velo540.@cell[0].ss_disable)
 	[ -n "$ssd" ] && [ -e "/sys/bus/usb/devices/usb3/$ssd/disable" ] && echo 1 > "/sys/bus/usb/devices/usb3/$ssd/disable" && echo "usb: SuperSpeed disabled on $ssd (modem falls back to USB2)"
 	# DSA mode from /etc/config/velo540: hand the switches to mv88e6xxx now,

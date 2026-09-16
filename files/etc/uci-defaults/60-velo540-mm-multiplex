@@ -1,0 +1,78 @@
+#!/bin/sh
+# Teach netifd's modemmanager proto to use a multiplexed (QMAP) bearer.
+#
+# Two things are missing upstream:
+#   1. there is no "multiplex" option, and netifd drops options a proto has not
+#      declared, so it never reaches mmcli;
+#   2. ModemManager names the rmnet mux link "qmapmux0.0", and netifd reads the
+#      dot as a VLAN tag and refuses the notify_proto call, so the interface
+#      never comes up.
+#
+# Without both, the modem runs unaggregated: ~120 Mbps on this board against
+# 170-295 Mbps with them (RM520N-GL, 5G SA n41, USB 3).  Needs kmod-rmnet.
+#
+# This lives in uci-defaults so it is re-applied after every sysupgrade, since
+# the proto ships in the modemmanager package and is overwritten by it.  If
+# upstream changes the file enough that the patch does not apply, the proto is
+# left alone and the bearer is simply not multiplexed: slower, never broken.
+F=${MM_PROTO:-/lib/netifd/proto/modemmanager.sh}
+[ -f "$F" ] || exit 0
+grep -q 'velo540: multiplex' "$F" && exit 0
+
+awk '
+# 1. declare the option next to the other strings
+/^[ \t]*proto_config_add_string iptype[ \t]*$/ && !decl {
+	print
+	print "\tproto_config_add_string multiplex\t# velo540: multiplex"
+	decl = 1
+	next
+}
+# 2. read it out of the interface config
+/json_get_vars device apn allowedauth username password[ \t]*$/ && !rd {
+	sub(/[ \t]*$/, "")
+	print $0 " multiplex"
+	rd = 1
+	next
+}
+# 3. pass it to mmcli.  This line appears twice; only the second builds the
+#    connect arguments, the first is for the initial EPS bearer settings.
+/^[ \t]*append_param "\$\{password:\+password=\$\{password\}\}"[ \t]*$/ {
+	pw++
+	print
+	if (pw == 2) print "\tappend_param \"${multiplex:+multiplex=${multiplex}}\""
+	next
+}
+# 4. clear mux links left over from a previous session.  Renaming the link (see
+#    below) means ModemManager can no longer delete it on teardown, and a stale
+#    link holds its mux id so the next connect fails with "failed to create net
+#    link for device".  At this point MM has disconnected, so any survivor is a
+#    leak.
+/^[ \t]*mmcli --modem="\$\{device\}" --timeout 120 --simple-connect=/ && !clean {
+	print "\tfor l in $(ls /sys/class/net 2>/dev/null | grep \"^qmapmux\"); do ip link del \"$l\" 2>/dev/null; done\t# velo540: mux cleanup"
+	clean = 1
+}
+# 5. give the mux link a name netifd will accept
+/^[ \t]*bearermethod_ipv4=\$\(modemmanager_get_field/ && !ren {
+	print "\tcase \"${beareriface}\" in"
+	print "\t*.*)"
+	print "\t\tmuxnew=$(echo \"${beareriface}\" | tr -d \".\")"
+	print "\t\tip link set \"${beareriface}\" down 2>/dev/null"
+	print "\t\tip link set \"${beareriface}\" name \"${muxnew}\" 2>/dev/null && beareriface=\"${muxnew}\""
+	print "\t\tip link set \"${beareriface}\" up 2>/dev/null"
+	print "\t\t;;"
+	print "\tesac"
+	ren = 1
+}
+{ print }
+' "$F" > /tmp/.mm-multiplex.$$ || exit 0
+
+# Only adopt the result if every edit landed and the shell still parses it.
+for pat in 'proto_config_add_string multiplex' 'password multiplex' 'multiplex=${multiplex}' 'muxnew' 'velo540: mux cleanup'; do
+	grep -q "$pat" /tmp/.mm-multiplex.$$ || { rm -f /tmp/.mm-multiplex.$$; exit 0; }
+done
+sh -n /tmp/.mm-multiplex.$$ 2>/dev/null || { rm -f /tmp/.mm-multiplex.$$; exit 0; }
+
+cat /tmp/.mm-multiplex.$$ > "$F"
+rm -f /tmp/.mm-multiplex.$$
+chmod 755 "$F"
+exit 0

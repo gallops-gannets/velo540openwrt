@@ -8,7 +8,8 @@
 #
 # Usage: velo540-celltest [quick]     quick = radio only, no transfers
 P=/dev/ttyUSB3
-IF=wwan0
+IF=$(ubus call network.interface.wwan status 2>/dev/null | jsonfilter -e '@.l3_device')
+[ -n "$IF" ] || IF=wwan0
 DOWN="http://speed.cloudflare.com/__down?bytes=75000000"
 UP="http://speed.cloudflare.com/__up"
 
@@ -34,13 +35,25 @@ if [ "$1" = quick ]; then
 	echo "chains RSRP $(f4 "$(at 'AT+QRSRP')") dBm   (idle: only the first two report)"
 	echo "chains SINR $(f4 "$(at 'AT+QSINR')") dB"
 else
+	# Time ONLY the transfers.  The radio sampling runs alongside them: the AT
+	# commands take ~18 s, so timing both together capped every reading at
+	# ~120 Mbps no matter how fast the link was.
 	s=$(up_cs)
-	for n in 1 2 3 4; do curl -s -m 70 -4 --interface "$IF" -o /dev/null "$DOWN" & done
-	sleep 8
-	R=$(at 'AT+QRSRP'); S=$(at 'AT+QSINR'); Q=$(at 'AT+QENG="servingcell"')
-	wait
+	pids=""
+	for n in 1 2 3 4 5 6; do
+		curl -s -m 70 -4 --interface "$IF" -o /dev/null "$DOWN" &
+		pids="$pids $!"
+	done
+	( sleep 6
+	  at 'AT+QRSRP' > /tmp/.ct.r
+	  at 'AT+QSINR' > /tmp/.ct.s
+	  at 'AT+QENG="servingcell"' > /tmp/.ct.q ) &
+	sampler=$!
+	wait $pids
 	e=$(up_cs)
-	[ $((e - s)) -gt 0 ] && DL=$(( 300 * 8 * 100 / (e - s) ))
+	wait $sampler 2>/dev/null
+	R=$(cat /tmp/.ct.r 2>/dev/null); S=$(cat /tmp/.ct.s 2>/dev/null); Q=$(cat /tmp/.ct.q 2>/dev/null)
+	[ $((e - s)) -gt 0 ] && DL=$(( 450 * 8 * 100 / (e - s) ))
 	UL=$(head -c 20000000 /dev/zero | curl -s -m 70 -4 --interface "$IF" -o /dev/null -w '%{speed_upload}' -X POST --data-binary @- "$UP" | awk '{printf "%.0f", $1*8/1e6}')
 	PG=$(ping -I "$IF" -c5 -W3 1.1.1.1 2>/dev/null | tail -1 | sed 's:.*= ::;s:/.*::')
 	echo "chains RSRP $(f4 "$R") dBm   (under load, all four)"
@@ -61,4 +74,4 @@ case "$C" in
 	[ -n "$C" ] && echo "cell   $C"
 	;;
 esac
-[ "$1" = quick ] || echo "speed  down ${DL:-?} Mbps   up ${UL:-?} Mbps   ping ${PG:-?} ms"
+[ "$1" = quick ] || echo "speed  down ${DL:-?} Mbps (6 streams)   up ${UL:-?} Mbps   ping ${PG:-?} ms"

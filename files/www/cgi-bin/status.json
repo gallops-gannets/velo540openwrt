@@ -6,7 +6,8 @@ D() { printf %d "$(G $1)" 2>/dev/null || echo 0; }
 . /lib/functions/network.sh
 wan=0; network_is_up wan && wan=1
 [ "$(cat /tmp/velo540-failover.state 2>/dev/null)" = failover ] && wan=0
-cell=0; [ $wan -eq 0 ] && ip -4 addr show wwan0 2>/dev/null | grep -q "inet " && cell=1
+cellif=$(ubus call network.interface.wwan status 2>/dev/null | jsonfilter -e '@.l3_device'); [ -n "$cellif" ] || cellif=wwan0
+cell=0; [ $wan -eq 0 ] && ip -4 addr show "$cellif" 2>/dev/null | grep -q "inet " && cell=1
 network_get_ipaddr wanip wan
 wit=""; for f in /tmp/velo540-witness/*.state; do [ -e "$f" ] || continue; wit="$wit\"$(basename $f .state)\":\"$(cat $f)\","; done
 t=$(( $(D 0x4e) * 256 + $(D 0x4f) )); [ $t -ge 65528 ] && rpm=0 || rpm=$(( 3932160 / (t >> 3) ))

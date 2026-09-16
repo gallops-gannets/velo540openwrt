@@ -76,8 +76,18 @@ backgrounded.
 * **Status JSON** for dashboards: `http://<box>/cgi-bin/status.json` (temps, fan,
   WAN/cellular, witness states, WiFi, LEDs); served on the LAN and Tailscale, and
   to the home LAN through firewall rule `velo_status_lan` if you add one.
-* **Cellular** (`config cell`): `velo540-cell status|restart|test start|stop|bandlock on|off`.
-  `ss_disable 1` keeps the modem on USB 2 (the TUSB7340 resets it on SuperSpeed).
+* **Cellular** (`config cell`): `velo540-cell status|restart|test start|stop|bandlock on|off`,
+  and `velo540-celltest` to measure (four receive chains under load, serving cell, throughput).
+  Getting full speed out of a USB modem on this board needs three things, all now automatic:
+  `ss_lpm_off '3-0:1.0/usb3-port1'` refuses USB3 U1/U2 on the modem's port, which is what
+  actually caused the SuperSpeed reset storm we originally worked around by forcing USB 2
+  (`ss_disable`, still available as a fallback); `kmod-rmnet` plus
+  `option multiplex 'required'` on the `wwan` interface turns on QMAP aggregation; and
+  `/etc/uci-defaults/60-velo540-mm-multiplex` teaches netifd's modemmanager proto the
+  `multiplex` option and renames the mux link, since netifd reads the dot in `qmapmux0.0`
+  as a VLAN tag and refuses it.  Measured on one RM520N-GL on 5G SA n41: 104 Mbps on USB 2
+  unaggregated, 170-295 Mbps with all three.  Note `network.wwan.device` names the modem's
+  sysfs path, which changes with the bus it enumerates on (`usb3/3-1`, not `usb1/1-1`).
   `velo540-ttl` rewrites TTL/hop-limit to 65 on `wwan0` so forwarded traffic is not
   classed as tethering.  If the modem never shows an NR carrier, check
   `AT+QNWPREFCFG="nr5g_band"` on `/dev/ttyUSB3`: one unit shipped locked to n48
