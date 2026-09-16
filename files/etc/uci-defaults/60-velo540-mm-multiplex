@@ -16,10 +16,22 @@
 # upstream changes the file enough that the patch does not apply, the proto is
 # left alone and the bearer is not multiplexed.
 #
-# That was meant to be a safe fallback and it is NOT, at least on the tested
-# box: once multiplexing was working, a plain connect stopped completing at all
-# (netifd disables the modem and gives up, 180 s, reproduced twice).  So a
-# failed patch means no cellular, not slow cellular.  Unresolved.
+# That was meant to be a safe fallback and it is NOT.  THIS PATCH IS LOAD
+# BEARING: on the tested box a non-multiplexed bearer no longer completes at
+# all.  Proven 2026-09-16 by restoring the stock proto from a pristine copy,
+# clearing the multiplex option and deleting the stale mux links -- the modem
+# still would not connect over three attempts and a ModemManager restart, and
+# only came back when multiplexing was re-enabled.  So the cause is NOT this
+# patch; something else about the modem or ModemManager state has made the
+# plain path unusable, and it is unresolved.  Consequence: if this patch fails
+# to apply after a sysupgrade, the box loses cellular entirely.  Check it after
+# every upgrade until the plain path is understood.
+#
+# Suspect worth chasing first: the QMI WDA data format may be stuck in QMAP
+# from the manual qmicli experiments on 2026-09-15 (the qmicli in the feed is
+# ABI-broken against this image's libqmi, so the restore call may never have
+# landed).  A non-multiplexed bearer would fail exactly like this if the modem
+# is still framing QMAP.
 F=${MM_PROTO:-/lib/netifd/proto/modemmanager.sh}
 [ -f "$F" ] || exit 0
 grep -q 'velo540: multiplex' "$F" && exit 0

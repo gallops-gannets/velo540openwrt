@@ -88,11 +88,15 @@ backgrounded.
   as a VLAN tag and refuses it.  Measured on one RM520N-GL on 5G SA n41: 104 Mbps on USB 2
   unaggregated, 240-290 Mbps with all three.  Note `network.wwan.device` names the modem's
   sysfs path, which changes with the bus it enumerates on (`usb3/3-1`, not `usb1/1-1`).
-  **Caveat, unresolved**: on the tested box the *non*-multiplexed path stopped coming up
-  once multiplexing worked (netifd tears down and never completes a plain connect, 180 s,
-  reproduced twice), so if the proto patch ever fails to apply the result is no cellular
-  rather than slow cellular.  Do not treat plain mode as a working fallback without
-  retesting it.  Upload is also far noisier than download on this link: 2-30 Mbps on a
+  **Caveat, unresolved — the multiplex patch is load bearing**: on the tested box a
+  non-multiplexed bearer no longer connects at all.  Proven by restoring the stock proto
+  from a pristine copy, clearing the option and deleting the stale mux links: the modem
+  still would not connect across three attempts and a ModemManager restart, and only
+  recovered when multiplexing was turned back on.  The patch is therefore not the cause.
+  If it ever fails to apply after a sysupgrade, the box loses cellular entirely, so check
+  after every upgrade.  First thing to chase: the QMI WDA data format may be stuck in
+  QMAP from manual `qmicli` experiments (the feed's `qmicli` is ABI-broken against this
+  image's libqmi, so the restore may never have landed).  Upload is also far noisier than download on this link: 2-30 Mbps on a
   single stream and a steady 13-15 Mbps across six, against 240+ Mbps down, and it tracks
   which cell the modem is camped on rather than anything configurable here.
   `velo540-ttl` rewrites TTL/hop-limit to 65 on `wwan0` so forwarded traffic is not
