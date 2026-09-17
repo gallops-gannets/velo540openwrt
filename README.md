@@ -118,6 +118,12 @@ backgrounded.
   as `list outlet 'router=1'`.  Two traps: the factory password is `admin` + the last
   three MAC octets, not `admin`; and its fail2ban (3 failures in 300 s) closes every TCP
   port for 300 s while ping still answers, so whitelist the box's own address on the PDU.
+* **Antenna placement**: `https://<box>/antenna.html` (Start/Stop on the page, or
+  `velo540-antenna start|stop`) shows all four receive chains live, strength and
+  quality, refreshed every ~1.5 s.  Start keeps a rate-limited download running
+  (~60 MB/min) because the module only reports two chains when idle; it stops
+  itself after 40 minutes.  Touch a paddle and watch which chain dips to learn
+  which is which.
 * **LEDs**: standard OpenWrt LED config (`/etc/config/system`); defaults are
   green steady = all good, red = the witness sees something down, blue = running on cellular (hotplug hook, WAN down and `wwan`/`cellular` up).
 
