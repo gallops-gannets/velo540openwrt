@@ -1,0 +1,180 @@
+#!/usr/bin/env python3
+"""velo540-antenna - live per-chain signal sampler for antenna placement.
+
+  velo540-antenna start [noload]   sample every ~1.5 s into /tmp/antenna.json,
+                                   keeping a light download running so the modem
+                                   reports all four receive chains (idle it only
+                                   reports two).  'noload' skips the download.
+  velo540-antenna stop
+  velo540-antenna status
+
+View it at https://<box>/antenna.html (phone-friendly bars), or
+`watch -n1 cat /tmp/antenna.json`.  The load is rate-limited to ~8 Mbps, about
+60 MB a minute -- fine for a placement session, not something to leave running.
+Stop it when you are done; it also stops itself after 40 minutes.
+"""
+import json
+import os
+import select
+import signal
+import subprocess
+import sys
+import time
+
+PORT = "/dev/ttyUSB3"
+OUT = "/tmp/antenna.json"
+PIDFILE = "/tmp/antenna.pid"
+LOADPID = "/tmp/antenna-load.pid"
+MAX_RUN = 40 * 60
+LOAD_URL = "http://speed.cloudflare.com/__down?bytes=75000000"
+
+
+def at(fd, cmd, timeout=4.0):
+    # Drain anything a previous slow reply left behind, so the parse below
+    # only sees this command's answer.  The module can take >2 s on QENG.
+    def rd():
+        # A non-blocking tty can report readable and then return EAGAIN.
+        try:
+            return os.read(fd, 4096)
+        except BlockingIOError:
+            return b""
+    while True:
+        r, _, _ = select.select([fd], [], [], 0.05)
+        if not r or not rd():
+            break
+    os.write(fd, (cmd + "\r").encode())
+    buf = b""
+    end = time.time() + timeout
+    while time.time() < end:
+        r, _, _ = select.select([fd], [], [], 0.2)
+        if r:
+            buf += rd()
+            if b"\r\nOK\r\n" in buf or b"ERROR" in buf:
+                break
+    return buf.decode(errors="ignore")
+
+
+def four(s, key):
+    for line in s.splitlines():
+        if line.startswith("+" + key + ":"):
+            vals = line.split(":", 1)[1].split(",")[:4]
+            out = []
+            for v in vals:
+                v = v.strip()
+                out.append(None if v in ("-32768", "") else int(v))
+            return out
+    return [None] * 4
+
+
+NR_BW = {0: 5, 1: 10, 2: 15, 3: 20, 4: 25, 5: 30, 6: 40, 7: 50, 8: 60, 9: 70, 10: 80, 11: 90, 12: 100}
+
+
+def cell(s):
+    for line in s.splitlines():
+        if line.startswith("+QENG:"):
+            f = [x.strip().strip('"') for x in line.split(",")]
+            if len(f) > 14 and f[2] == "NR5G-SA":
+                return {"mode": "5G SA", "band": "n" + f[9], "bw_mhz": NR_BW.get(int(f[10]) if f[10].isdigit() else -1),
+                        "rsrp": int(f[11]), "rsrq": int(f[12]), "sinr": int(f[13]), "pci": f[7]}
+            if len(f) > 6:
+                return {"mode": f[2], "raw": line[:80]}
+    return {}
+
+
+def rx_bytes():
+    try:
+        dev = subprocess.run(["sh", "-c", "ubus call network.interface.wwan status | jsonfilter -e '@.l3_device'"],
+                             capture_output=True, text=True).stdout.strip() or "wwan0"
+        with open("/proc/net/dev") as f:
+            for line in f:
+                if line.strip().startswith(dev + ":"):
+                    return dev, int(line.split(":")[1].split()[0])
+    except Exception:
+        pass
+    return "?", 0
+
+
+def sampler(load):
+    fd = os.open(PORT, os.O_RDWR | os.O_NOCTTY | os.O_NONBLOCK)
+    dev, base = rx_bytes()
+    start = time.time()
+    at(fd, "ATE0")
+    while time.time() - start < MAX_RUN:
+        rsrp = four(at(fd, "AT+QRSRP"), "QRSRP")
+        sinr = four(at(fd, "AT+QSINR"), "QSINR")
+        c = cell(at(fd, 'AT+QENG="servingcell"'))
+        _, now = rx_bytes()
+        rec = {"ts": int(time.time()), "age_s": int(time.time() - start), "load": load,
+               "rsrp": rsrp, "sinr": sinr, "cell": c, "iface": dev,
+               "mb_used": round((now - base) / 1e6, 1)}
+        tmp = OUT + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(rec, f)
+        os.replace(tmp, OUT)
+        time.sleep(0.8)
+    stop()
+
+
+def start(load):
+    if os.path.exists(PIDFILE):
+        print("already running (velo540-antenna stop first)"); return 1
+    if load:
+        dev, _ = rx_bytes()
+        cmd = (f"while :; do curl -s -m 120 -4 --interface {dev} --limit-rate 1M -o /dev/null '{LOAD_URL}'; sleep 1; done")
+        p = subprocess.Popen(["sh", "-c", cmd], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                             start_new_session=True)
+        open(LOADPID, "w").write(str(p.pid))
+    pid = os.fork()
+    if pid == 0:
+        os.setsid()
+        # Detach from the caller's terminal; keep a log so a crash is visible.
+        err = os.open("/tmp/antenna.err", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
+        devnull = os.open(os.devnull, os.O_RDONLY)
+        os.dup2(devnull, 0); os.dup2(err, 1); os.dup2(err, 2)
+        try:
+            sampler(load)
+        except BaseException:
+            import traceback
+            traceback.print_exc()
+        finally:
+            os._exit(0)
+    open(PIDFILE, "w").write(str(pid))
+    print(f"sampling into {OUT} (load={'on' if load else 'off'}); view https://<box>/antenna.html")
+    return 0
+
+
+def stop():
+    for pf in (LOADPID, PIDFILE):
+        try:
+            pid = int(open(pf).read())
+            os.killpg(pid, signal.SIGTERM) if pf == LOADPID else os.kill(pid, signal.SIGTERM)
+        except Exception:
+            pass
+        try:
+            os.remove(pf)
+        except OSError:
+            pass
+    subprocess.run(["sh", "-c", "pkill -f 'curl -s -m 120 -4 --interface' 2>/dev/null"], check=False)
+    print("stopped")
+    return 0
+
+
+def status():
+    if not os.path.exists(PIDFILE):
+        print("not running"); return 1
+    try:
+        print(open(OUT).read())
+    except OSError:
+        print("running, no sample yet")
+    return 0
+
+
+if __name__ == "__main__":
+    a = sys.argv[1:] or ["status"]
+    if a[0] == "start":
+        sys.exit(start("noload" not in a[1:]))
+    if a[0] == "stop":
+        sys.exit(stop())
+    if a[0] == "status":
+        sys.exit(status())
+    print(__doc__.strip()); sys.exit(2)

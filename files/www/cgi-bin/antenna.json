@@ -1,0 +1,15 @@
+#!/bin/sh
+# Live antenna sample for antenna.html (written by velo540-antenna).
+echo "Content-Type: application/json"
+echo "Cache-Control: no-store"
+echo
+# Start/stop from the page itself so a phone is enough: ?start=1 / ?stop=1.
+case "$QUERY_STRING" in
+	*start=1*) [ -e /tmp/antenna.pid ] || velo540-antenna start >/dev/null 2>&1; sleep 3 ;;
+	*stop=1*)  velo540-antenna stop >/dev/null 2>&1; rm -f /tmp/antenna.json; echo '{"error":"stopped"}'; exit 0 ;;
+esac
+if [ -s /tmp/antenna.json ]; then
+	cat /tmp/antenna.json
+else
+	echo '{"error":"not running: ssh in and run velo540-antenna start"}'
+fi

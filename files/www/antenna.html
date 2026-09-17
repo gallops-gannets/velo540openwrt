@@ -1,0 +1,52 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Antenna placement</title>
+<style>
+ body{font-family:system-ui,sans-serif;background:#111;color:#eee;margin:0;padding:12px}
+ h1{font-size:18px;margin:0 0 6px}
+ .cell{font-size:15px;color:#bbb;margin-bottom:10px}
+ .chain{margin:10px 0}
+ .lbl{display:flex;justify-content:space-between;font-size:15px}
+ .bar{height:22px;background:#333;border-radius:4px;overflow:hidden;margin:3px 0}
+ .fill{height:100%;transition:width .4s}
+ .big{font-size:26px;font-weight:600}
+ .foot{font-size:13px;color:#888;margin-top:14px}
+ .warn{color:#f66}
+</style></head><body>
+<h1>Antenna placement <span id="age" style="font-weight:normal;color:#888"></span></h1>
+<p><button onclick="ctl('start')" style="font-size:16px;padding:8px 14px">Start</button>
+   <button onclick="ctl('stop')" style="font-size:16px;padding:8px 14px">Stop</button>
+   <span style="color:#888;font-size:13px">Start runs a light download (~60 MB/min) so all four chains report.</span></p>
+<div class="cell" id="cell">waiting for a sample…</div>
+<div id="chains"></div>
+<div class="foot" id="foot"></div>
+<script>
+// RSRP -110..-70 dBm and SINR -10..25 dB map to 0..100 % of the bar.
+function pct(v,lo,hi){ if(v==null) return 0; return Math.max(0,Math.min(100,100*(v-lo)/(hi-lo))); }
+function color(p){ return p<33?'#d33':(p<66?'#e8a300':'#3c3'); }
+function render(d){
+  if(d.error){ document.getElementById('cell').textContent=d.error; return; }
+  var c=d.cell||{};
+  document.getElementById('cell').innerHTML = (c.mode||'?')+' '+(c.band||'')+' '+(c.bw_mhz?c.bw_mhz+' MHz':'')+
+    ' &nbsp; cell RSRP <b>'+c.rsrp+'</b> dBm &nbsp; SINR <b class="big">'+c.sinr+'</b> dB';
+  var h='';
+  var names=['0 main/TX','1','2','3'];
+  for(var i=0;i<4;i++){
+    var r=d.rsrp[i], s=d.sinr[i];
+    var pr=pct(r,-110,-70), ps=pct(s,-10,25);
+    h+='<div class="chain"><div class="lbl"><span>chain '+names[i]+'</span><span>RSRP <b>'+(r==null?'—':r)+'</b> dBm &nbsp; SINR <b>'+(s==null?'—':s)+'</b> dB</span></div>'+
+       '<div class="bar"><div class="fill" style="width:'+pr+'%;background:'+color(pr)+'"></div></div>'+
+       '<div class="bar"><div class="fill" style="width:'+ps+'%;background:'+color(ps)+'"></div></div></div>';
+  }
+  document.getElementById('chains').innerHTML=h;
+  document.getElementById('age').textContent='('+d.age_s+' s running)';
+  document.getElementById('foot').innerHTML='top bar = strength (RSRP), bottom bar = quality (SINR). '+
+    (d.load?'Light download running so all four chains report; ':'No load: only two chains report; ')+
+    'cellular data used this session: <b>'+d.mb_used+' MB</b>.'+
+    (d.age_s>1800?' <span class="warn">Stop soon: velo540-antenna stop</span>':'')+
+    ' &nbsp; Touch a paddle with your hand: the chain whose bars dip is that paddle.';
+}
+function tick(){ fetch('/cgi-bin/antenna.json',{cache:'no-store'}).then(function(r){return r.json()}).then(render).catch(function(){}); }
+function ctl(what){ fetch('/cgi-bin/antenna.json?'+what+'=1',{cache:'no-store'}).then(function(r){return r.json()}).then(render).catch(function(){}); }
+tick(); setInterval(tick,1500);
+</script></body></html>
