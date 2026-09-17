@@ -73,9 +73,10 @@ def cell(s):
     for line in s.splitlines():
         if line.startswith("+QENG:"):
             f = [x.strip().strip('"') for x in line.split(",")]
+            # "servingcell",state,"NR5G-SA",duplex,MCC,MNC,cellID,PCID,TAC,ARFCN,band,bw,RSRP,RSRQ,SINR,scs,srxlev
             if len(f) > 14 and f[2] == "NR5G-SA":
-                return {"mode": "5G SA", "band": "n" + f[9], "bw_mhz": NR_BW.get(int(f[10]) if f[10].isdigit() else -1),
-                        "rsrp": int(f[11]), "rsrq": int(f[12]), "sinr": int(f[13]), "pci": f[7]}
+                return {"mode": "5G SA", "band": "n" + f[10], "bw_mhz": NR_BW.get(int(f[11]) if f[11].isdigit() else -1),
+                        "rsrp": int(f[12]), "rsrq": int(f[13]), "sinr": int(f[14]), "pci": f[7]}
             if len(f) > 6:
                 return {"mode": f[2], "raw": line[:80]}
     return {}
@@ -99,10 +100,19 @@ def sampler(load):
     dev, base = rx_bytes()
     start = time.time()
     at(fd, "ATE0")
+    last = {"rsrp": [None] * 4, "sinr": [None] * 4, "cell": {}}
     while time.time() - start < MAX_RUN:
-        rsrp = four(at(fd, "AT+QRSRP"), "QRSRP")
-        sinr = four(at(fd, "AT+QSINR"), "QSINR")
-        c = cell(at(fd, 'AT+QENG="servingcell"'))
+        # The module answers these slowly and sometimes late; parse the three
+        # replies from one accumulated buffer and keep the last good value for
+        # anything that did not arrive this round, so the bars never blank out.
+        buf = at(fd, "AT+QRSRP") + at(fd, "AT+QSINR") + at(fd, 'AT+QENG="servingcell"')
+        rsrp = four(buf, "QRSRP")
+        sinr = four(buf, "QSINR")
+        c = cell(buf)
+        rsrp = [a if a is not None else b for a, b in zip(rsrp, last["rsrp"])]
+        sinr = [a if a is not None else b for a, b in zip(sinr, last["sinr"])]
+        c = c or last["cell"]
+        last = {"rsrp": rsrp, "sinr": sinr, "cell": c}
         _, now = rx_bytes()
         rec = {"ts": int(time.time()), "age_s": int(time.time() - start), "load": load,
                "rsrp": rsrp, "sinr": sinr, "cell": c, "iface": dev,
@@ -154,7 +164,7 @@ def stop():
             os.remove(pf)
         except OSError:
             pass
-    subprocess.run(["sh", "-c", "pkill -f 'curl -s -m 120 -4 --interface' 2>/dev/null"], check=False)
+    subprocess.run(["sh", "-c", "pkill -f 'limit-rate 1M' 2>/dev/null; pkill -f 'curl -s -m 120 -4 --interface' 2>/dev/null"], check=False)
     print("stopped")
     return 0
 
