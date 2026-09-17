@@ -16,7 +16,7 @@
 <h1>Antenna placement <span id="age" style="font-weight:normal;color:#888"></span></h1>
 <p><button onclick="ctl('start')" style="font-size:16px;padding:8px 14px">Start</button>
    <button onclick="ctl('stop')" style="font-size:16px;padding:8px 14px">Stop</button>
-   <span style="color:#888;font-size:13px">Start runs a light download (~12 MB/min) so all four chains report. The plan is 25 GB a month; stop it when you are done.</span></p>
+   <span style="color:#888;font-size:13px">Start runs a trickle download (~1.2 MB/min) so all four chains report; stop it when you are done.</span></p>
 <div class="cell" id="cell">waiting for a sample…</div>
 <div id="chains"></div>
 <div class="foot" id="foot"></div>
@@ -49,5 +49,5 @@ function render(d){
 }
 function tick(){ fetch('/cgi-bin/antenna.json',{cache:'no-store'}).then(function(r){return r.json()}).then(render).catch(function(){}); }
 function ctl(what){ fetch('/cgi-bin/antenna.json?'+what+'=1',{cache:'no-store'}).then(function(r){return r.json()}).then(render).catch(function(){}); }
-tick(); setInterval(tick,1500);
+tick(); setInterval(tick,700);
 </script></body></html>

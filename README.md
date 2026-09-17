@@ -120,8 +120,8 @@ backgrounded.
   port for 300 s while ping still answers, so whitelist the box's own address on the PDU.
 * **Antenna placement**: `https://<box>/antenna.html` (Start/Stop on the page, or
   `velo540-antenna start|stop`) shows all four receive chains live, strength and
-  quality, refreshed every ~1.5 s.  Start keeps a rate-limited download running
-  (~12 MB/min) because the module only reports two chains when idle; it stops
+  quality, refreshed about twice a second.  Start keeps a rate-limited download running
+  (~1.2 MB/min) because the module only reports two chains when idle; it stops
   itself after 40 minutes.  Touch a paddle and watch which chain dips to learn
   which is which.
 * **LEDs**: standard OpenWrt LED config (`/etc/config/system`); defaults are
