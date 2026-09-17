@@ -77,7 +77,7 @@ backgrounded.
   WAN/cellular, witness states, WiFi, LEDs); served on the LAN and Tailscale, and
   to the home LAN through firewall rule `velo_status_lan` if you add one.
 * **Cellular** (`config cell`): `velo540-cell status|restart|test start|stop|bandlock on|off`,
-  and `velo540-celltest` to measure (four receive chains under load, serving cell, throughput).
+  and `velo540-celltest yes` to measure (four receive chains under load, serving cell, throughput; ~600 MB of plan data per run, so it asks; `quick` is radio-only and free).
   Getting full speed out of a USB modem on this board needs three things, all now automatic:
   `ss_lpm_off '3-0:1.0/usb3-port1'` refuses USB3 U1/U2 on the modem's port, which is what
   actually caused the SuperSpeed reset storm we originally worked around by forcing USB 2
@@ -121,7 +121,7 @@ backgrounded.
 * **Antenna placement**: `https://<box>/antenna.html` (Start/Stop on the page, or
   `velo540-antenna start|stop`) shows all four receive chains live, strength and
   quality, refreshed every ~1.5 s.  Start keeps a rate-limited download running
-  (~60 MB/min) because the module only reports two chains when idle; it stops
+  (~12 MB/min) because the module only reports two chains when idle; it stops
   itself after 40 minutes.  Touch a paddle and watch which chain dips to learn
   which is which.
 * **LEDs**: standard OpenWrt LED config (`/etc/config/system`); defaults are

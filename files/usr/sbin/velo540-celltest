@@ -6,7 +6,7 @@
 # and after moving antennas: chains within ~3 dB of each other and SINR above
 # 10 dB is the target; today's baseline is a 10-14 dB spread and SINR near 0.
 #
-# Usage: velo540-celltest [quick]     quick = radio only, no transfers
+# Usage: velo540-celltest yes|quick   yes = full run (~600 MB of plan data); quick = radio only, free
 P=/dev/ttyUSB3
 IF=$(ubus call network.interface.wwan status 2>/dev/null | jsonfilter -e '@.l3_device')
 [ -n "$IF" ] || IF=wwan0
@@ -29,6 +29,14 @@ up_cs() { cut -d' ' -f1 /proc/uptime | tr -d .; }
 
 A=$(ip -4 -br addr show "$IF" 2>/dev/null | awk '{print $3}')
 [ -z "$A" ] && { echo "no $IF address - modem is not connected"; exit 1; }
+# A full run moves ~600 MB over the cellular plan (450 down + 140 up).  On a
+# 25 GB month that is real money in throttle terms: 2026-09-15's testing spent
+# 19.3 GB in one night.  Make the cost explicit and require a deliberate yes.
+if [ "$1" != quick ] && [ "$1" != yes ]; then
+	echo "velo540-celltest moves ~600 MB of cellular data per run (25 GB/month plan)."
+	echo "Run 'velo540-celltest yes' to go ahead, or 'velo540-celltest quick' for radio only (no data)."
+	exit 2
+fi
 [ -c "$P" ] || echo "note: $P missing, radio detail unavailable"
 
 if [ "$1" = quick ]; then
