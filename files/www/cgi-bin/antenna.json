@@ -10,6 +10,8 @@ case "$QUERY_STRING" in
 esac
 if [ -s /tmp/antenna.json ]; then
 	cat /tmp/antenna.json
+elif [ -e /tmp/antenna.pid ]; then
+	echo '{"starting":true}'
 else
-	echo '{"error":"not running: ssh in and run velo540-antenna start"}'
+	echo '{"error":"not running - press Start"}'
 fi

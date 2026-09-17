@@ -25,7 +25,8 @@
 function pct(v,lo,hi){ if(v==null) return 0; return Math.max(0,Math.min(100,100*(v-lo)/(hi-lo))); }
 function color(p){ return p<33?'#d33':(p<66?'#e8a300':'#3c3'); }
 function render(d){
-  if(d.error){ document.getElementById('cell').textContent=d.error; return; }
+  if(d.error){ document.getElementById('cell').textContent=d.error; document.getElementById('chains').innerHTML=''; return; }
+  if(d.starting){ document.getElementById('cell').textContent='starting, first sample in a few seconds…'; return; }
   var c=d.cell||{};
   document.getElementById('cell').innerHTML = (c.mode||'?')+' '+(c.band||'')+' '+(c.bw_mhz?c.bw_mhz+' MHz':'')+
     ' &nbsp; cell RSRP <b>'+c.rsrp+'</b> dBm &nbsp; SINR <b class="big">'+c.sinr+'</b> dB';
