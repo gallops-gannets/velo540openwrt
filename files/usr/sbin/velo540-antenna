@@ -151,7 +151,8 @@ def sampler(load):
         if n % 10 == 1:
             band = cell(at(fd, 'AT+QENG="servingcell"'))
             if band:
-                c.update({k: band[k] for k in ("band", "bw_mhz", "pci") if k in band})
+                # ModemManager's 5G block has no SINR on this build; take it from QENG.
+                c.update({k: band[k] for k in ("band", "bw_mhz", "pci", "sinr") if k in band})
         rsrp = [a if a is not None else b for a, b in zip(rsrp, last["rsrp"])]
         sinr = [a if a is not None else b for a, b in zip(sinr, last["sinr"])]
         last = {"rsrp": rsrp, "sinr": sinr, "cell": c}
