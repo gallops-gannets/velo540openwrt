@@ -79,7 +79,7 @@ backgrounded.
 * **Cellular** (`config cell`): `velo540-cell status|restart|test start|stop|bandlock on|off`,
   and `velo540-celltest yes` to measure (four receive chains under load, serving cell, throughput; ~600 MB of plan data per run, so it asks; `quick` is radio-only and free).
   Getting full speed out of a USB modem on this board needs three things, all now automatic:
-  `ss_lpm_off '3-0:1.0/usb3-port1'` refuses USB3 U1/U2 on the modem's port, which is what
+  `ss_lpm_off '3-0:1.0/usb3-port1'` refuses USB3 U1/U2 on a named port at boot, and `velo540-modemdev -u` (run by the usb hotplug hook) refuses it on whichever SuperSpeed port the modem actually lands on, which is what
   actually caused the SuperSpeed reset storm we originally worked around by forcing USB 2
   (`ss_disable`, still available as a fallback); `kmod-rmnet` plus
   `option multiplex 'required'` on the `wwan` interface turns on QMAP aggregation; and
@@ -104,6 +104,10 @@ backgrounded.
   `AT+QNWPREFCFG="nr5g_band"` on `/dev/ttyUSB3`: one unit shipped locked to n48
   only; setting the full list (`1:2:3:5:7:8:12:20:25:28:38:40:41:48:66:71:75:76:77:78:79`)
   is stored in modem NVRAM and gave 5G SA on n41.
+  A mini-PCIe Renesas uPD720202 USB 3 card (kmod-usb-xhci-pci-renesas is in the image)
+  replaces the board's TI TUSB7340 for the modem: 5 Gbps link, no resets, 199 Mbps on
+  first measurement against 115 on USB 2 with a worse radio.  Adding it renumbers the USB
+  buses (Renesas usb1/usb3, TI usb4/usb5); the hotplug hook handles the modem's path.
 * **Cellular measurement**: `velo540-celltest` (add `quick` to skip transfers) prints
   the four receive chains sampled under load, the serving cell and throughput.  Use it
   to score antenna moves: the chains should land within ~3 dB of each other with SINR

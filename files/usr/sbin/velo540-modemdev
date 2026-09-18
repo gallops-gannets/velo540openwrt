@@ -17,6 +17,18 @@ done
 
 [ "$1" = "-u" ] || { echo "$P"; exit 0; }
 
+# Refuse USB3 link power management on whichever SuperSpeed port the modem is
+# actually on.  The static ss_lpm_off in velo540-switch names a fixed port, and
+# bus numbers move when a controller is added (the mini-PCIe Renesas card took
+# usb1/usb3 and pushed the TI controller to usb4/usb5).  U1/U2 on the modem's
+# port is what caused the SuperSpeed reset storm.
+DEV=$(basename "$P")                      # e.g. 3-1 or 3-1.2
+BUS=${DEV%%-*}; PORT=${DEV#*-}; PORT=${PORT%%.*}
+LPM="/sys/bus/usb/devices/usb$BUS/$BUS-0:1.0/usb$BUS-port$PORT/usb3_lpm_permit"
+if [ -w "$LPM" ] && [ "$(cat "$LPM")" != "0" ]; then
+	echo 0 > "$LPM" && echo "usb3 lpm refused on usb$BUS port $PORT (modem's port)"
+fi
+
 CUR=$(uci -q get network.wwan.device)
 [ "$CUR" = "$P" ] && { echo "unchanged: $P"; exit 0; }
 uci set network.wwan.device="$P"
