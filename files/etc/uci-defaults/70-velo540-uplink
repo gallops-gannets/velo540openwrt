@@ -16,6 +16,22 @@ set network.uplink2.device='eth5'
 set network.uplink2.ipaddr='10.11.1.1'
 set network.uplink2.netmask='255.255.255.252'
 UCI
+# Whatever arrives on GE2 always leaves over cellular, whatever this box's own
+# default route is: netifd keeps a default via the cellular l3 device in table
+# 100 while wwan is up, and a rule sends uplink2 traffic there.  With cellular
+# down the lookup falls through to main and the zone rules drop it (never out
+# GE1 into the router's LAN).  Also what makes the path testable with the fibre
+# up: pin one host route on the router via 10.11.1.1 and fetch something.
+uci -q get network.cellroute >/dev/null || uci -q batch <<'UCI'
+set network.cellroute=route
+set network.cellroute.interface='wwan'
+set network.cellroute.target='0.0.0.0/0'
+set network.cellroute.table='100'
+set network.uplinkrule=rule
+set network.uplinkrule.in='uplink2'
+set network.uplinkrule.lookup='100'
+set network.uplinkrule.priority='100'
+UCI
 uci commit network
 if ! uci -q get firewall.cell >/dev/null; then
 	uci -q batch <<'UCI'

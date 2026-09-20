@@ -113,10 +113,11 @@ backgrounded.
   buses (Renesas usb1/usb3, TI usb4/usb5); the hotplug hook handles the modem's path.
 * **House-wide failover** (`/etc/uci-defaults/70-velo540-uplink`, spec in
   home-network-ops `docs/house-failover-spec.md`): GE2 (`eth5`) is `uplink2`, a /30 to a
-  spare router port; the cellular interface sits in its own `cell` zone and the only
-  forwardings into it are `uplink`→`cell` and `lan`→`cell`, so house traffic can never
-  loop back out GE1 if the two boxes fail over a few seconds apart (it is dropped
-  instead).  CAKE (`sqm.cell`, needs kmod-sched-cake/kmod-ifb/sqm-scripts in the image)
+  spare router port; traffic arriving on it is policy-routed to the cellular interface (table 100, a
+  netifd route kept in step with `wwan`) whatever the box's own default is, and the
+  cellular interface sits in its own `cell` zone with `uplink`→`cell` and `lan`→`cell`
+  the only forwardings into it, so with cellular down house traffic is dropped rather
+  than looped back out GE1 into the router's LAN.  CAKE (`sqm.cell`, needs kmod-sched-cake/kmod-ifb/sqm-scripts in the image)
   shapes `qmapmux00` itself with `diffserv4`; `velo540-ttl` also marks everything the
   box originates CS6 so management traffic (Tailscale, SSH, witness, PDU) rides above a
   bulk download.  cake-autorate (installed from GitHub into `/root/cake-autorate`, kept
