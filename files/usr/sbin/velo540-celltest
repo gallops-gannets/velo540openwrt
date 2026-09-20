@@ -6,7 +6,11 @@
 # and after moving antennas: chains within ~3 dB of each other and SINR above
 # 10 dB is the target; today's baseline is a 10-14 dB spread and SINR near 0.
 #
-# Usage: velo540-celltest yes|quick   yes = full run (~600 MB of plan data); quick = radio only, free
+# Usage: velo540-celltest yes|quick|small
+#   yes   = full run (~600 MB of plan data)
+#   quick = radio only, free
+#   small = ~3.5 MB: 2 x 1.5 MB down, 0.5 MB up, ping; one-line speed summary
+#           (what the dashboard's Speed button and failover test report)
 P=/dev/ttyUSB3
 IF=$(ubus call network.interface.wwan status 2>/dev/null | jsonfilter -e '@.l3_device')
 [ -n "$IF" ] || IF=wwan0
@@ -32,6 +36,25 @@ A=$(ip -4 -br addr show "$IF" 2>/dev/null | awk '{print $3}')
 # A full run moves ~600 MB over the cellular plan (450 down + 140 up).  On a
 # 25 GB month that is real money in throttle terms: 2026-09-15's testing spent
 # 19.3 GB in one night.  Make the cost explicit and require a deliberate yes.
+if [ "$1" = small ]; then
+	s=$(up_cs)
+	curl -s -m 40 -4 --interface "$IF" -o /dev/null "http://speed.cloudflare.com/__down?bytes=1500000" &
+	p1=$!
+	curl -s -m 40 -4 --interface "$IF" -o /dev/null "http://speed.cloudflare.com/__down?bytes=1500000" &
+	p2=$!
+	wait $p1 $p2
+	e=$(up_cs); [ $((e - s)) -gt 0 ] && DL=$(( 3 * 8 * 100 / (e - s) )) || DL=">240"
+	UL=$(head -c 500000 /dev/zero | curl -s -m 40 -4 --interface "$IF" -o /dev/null -w '%{speed_upload}' -X POST --data-binary @- "$UP" | awk '{printf "%.0f", $1*8/1e6}')
+	PG=$(ping -I "$IF" -c3 -W3 9.9.9.9 2>/dev/null | tail -1 | sed 's:.*= ::;s:/.*::')
+	Q=$(at 'AT+QENG="servingcell"'); C=$(echo "$Q" | grep -m1 QENG | tr -d ' "')
+	case "$C" in
+	*NR5G-SA*) set -- $(echo "$C" | cut -d, -f10-15 | tr ',' ' '); CELL="5G SA n$2 RSRP $4 SINR $6";;
+	*LTE*) CELL="LTE";;
+	*) CELL="?";;
+	esac
+	echo "down ~${DL} Mbps, up ~${UL:-?} Mbps (3 MB burst: a floor, not the link ceiling), ping ${PG:-?} ms ($CELL; 3.5 MB used)"
+	exit 0
+fi
 if [ "$1" != quick ] && [ "$1" != yes ]; then
 	echo "velo540-celltest moves ~600 MB of cellular data per run (25 GB/month plan)."
 	echo "Run 'velo540-celltest yes' to go ahead, or 'velo540-celltest quick' for radio only (no data)."
