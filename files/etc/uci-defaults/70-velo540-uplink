@@ -68,6 +68,23 @@ UCI
 	uci -q del_list firewall.@zone[1].network='wwan'
 	uci commit firewall
 fi
+# The router tells this box the house state (GET /cgi-bin/house) over GE2 only;
+# the shared token in /etc/velo540-house.secret is what actually guards it,
+# because the router masquerades its LAN onto 10.11.1.2.  Generated once here
+# and kept by sysupgrade; copy it into uci failover.@tracker[0].velo_token on
+# the router.
+uci -q get firewall.uplink_house >/dev/null || uci -q batch <<'UCI'
+set firewall.uplink_house=rule
+set firewall.uplink_house.name='house state from the router (GE2 only)'
+set firewall.uplink_house.src='uplink'
+set firewall.uplink_house.src_ip='10.11.1.2'
+set firewall.uplink_house.proto='tcp'
+set firewall.uplink_house.dest_port='80'
+set firewall.uplink_house.target='ACCEPT'
+commit firewall
+UCI
+[ -s /etc/velo540-house.secret ] || { umask 077; head -c 16 /dev/urandom | hexdump -ve '1/1 "%02x"' > /etc/velo540-house.secret; echo >> /etc/velo540-house.secret; }
+grep -q '^/etc/velo540-house.secret' /etc/sysupgrade.conf 2>/dev/null || echo '/etc/velo540-house.secret' >> /etc/sysupgrade.conf
 if [ -f /etc/config/sqm ] && ! uci -q get sqm.cell >/dev/null; then
 	uci -q batch <<'UCI'
 set sqm.cell=queue

@@ -14,38 +14,75 @@ STATE=/tmp/velo540-failover.state
 probes="1.1.1.1 8.8.8.8"
 miss=0; state=primary; saved=; echo primary > $STATE
 # House-wide failover is the ROUTER's decision (router-failover withdraws its
-# fibre default and sends the house to us on GE2/uplink2).  This box's own
-# probes keep answering through that very path, so its own state never flips;
-# the house being on cellular is detected from traffic on uplink2 (both
-# directions: a download shows up mostly as bytes towards the house).
-# While it is: cake-autorate runs (its reflector pings then follow the cellular
-# path and cost ~6 MB/h only while there is load) and the logo LED is blue.
+# fibre default and installs a route to us on GE2/uplink2).  This box's own
+# probes keep answering through that very path, so its own state never flips.
+# Since 2026-09-20 the router TELLS us the house state: GET /cgi-bin/house
+# (token-guarded, GE2 only) writes $SIGNAL on every transition and as a
+# heartbeat about once a minute.  The earlier byte-count heuristic on GE2 is
+# gone -- it paged "house on cellular" for three Macs' encrypted DNS leaking
+# through a pinned probe route, with the router firmly on fibre.
+# While the house is on cellular: cake-autorate runs (its reflector pings then
+# follow the cellular path and cost ~6 MB/h only while there is load) and the
+# logo LED is blue.
+# While the house is on fibre: the LEAK DETECTOR runs.  Any conntrack flow
+# from the router's GE2 address (10.11.1.2) that is not one of the router's
+# own velo-path probes and not addressed to this box is house traffic that
+# reached our cellular NAT without a failover -- exactly what must never
+# happen -- and it pages, with the flow, via the witness's channels.
 HOUSE=/tmp/velo540-house.state; house=primary; echo primary > $HOUSE
-house_thr=$(uci -q get velo540.@cell[0].house_thr_bytes); house_thr=${house_thr:-50000}   # rx+tx per period; GE2 carries nothing otherwise
-house_idle_max=$(uci -q get velo540.@cell[0].house_idle_periods); house_idle_max=${house_idle_max:-30}
-rx_prev=; idle=0
-house_check() {
-	local dev rx delta
-	network_get_device dev uplink2; [ -n "$dev" ] || return
-	rx=$(( $(cat /sys/class/net/$dev/statistics/rx_bytes 2>/dev/null || echo 0) + $(cat /sys/class/net/$dev/statistics/tx_bytes 2>/dev/null || echo 0) ))
-	delta=$(( rx - ${rx_prev:-$rx} )); rx_prev=$rx
-	if [ $delta -gt $house_thr ]; then
-		idle=0
-		if [ $house = primary ]; then
-			house=cellular; echo cellular > $HOUSE
-			logger -t velo540-failover "house traffic arriving on $dev: house is on cellular, starting cake-autorate"
-			[ -x /etc/init.d/cake-autorate ] && /etc/init.d/cake-autorate start >/dev/null 2>&1
-			/etc/hotplug.d/iface/90-velo540-led >/dev/null 2>&1
+SIGNAL=/tmp/velo540-house.signal; AGE=/tmp/velo540-house.age
+LEAK=/tmp/velo540-leak.state; LEAKS=/tmp/velo540-leak.sample
+house_allow=$(uci -q get velo540.@cell[0].house_allow); house_allow=${house_allow:-"208.67.222.222 76.76.2.0"}  # router-failover's vprobes
+leak_grace=$(uci -q get velo540.@cell[0].leak_grace); leak_grace=${leak_grace:-180}   # s after a failover ends before flows count (TIME_WAIT is 120)
+leak_repage=$(uci -q get velo540.@cell[0].leak_repage); leak_repage=${leak_repage:-3600}
+house_since=$(date +%s); leak_hits=0; leak_paged=0; rm -f $LEAK $LEAKS
+u() { v=$(uci -q get velo540.@witness[0].$1); echo "${v:-$2}"; }
+pt=$(u pushover_token ""); pu=$(u pushover_user ""); ntfy=$(u ntfy_url "")
+page() {	# $1 = title, $2 = message (same channels as velo540-witness)
+	logger -t velo540-failover "$1: $2"
+	[ -n "$pt" ] && [ -n "$pu" ] && curl -s -m 10 -F "token=$pt" -F "user=$pu" -F "title=$1" -F "message=$2" https://api.pushover.net/1/messages.json >/dev/null 2>&1
+	[ -n "$ntfy" ] && curl -s -m 10 -H "Title: $1" -d "$2" "$ntfy" >/dev/null 2>&1
+	return 0
+}
+leak_check() {
+	local pat t n sample now
+	pat="dst=10.11.1.1 "; for t in $house_allow; do pat="$pat|dst=$t "; done
+	sample=$(grep "src=10.11.1.2 " /proc/net/nf_conntrack 2>/dev/null | grep -vE "$pat" \
+		| awk '{d="";p="";for(i=1;i<=NF;i++){if($i~/^dst=/&&d=="")d=substr($i,5);if($i~/^dport=/&&p=="")p=substr($i,7)} print $3"/"d":"p}' \
+		| sort | uniq -c | sort -rn | head -5 | awk '{printf "%s x%d; ", $2, $1}')
+	n=$(grep "src=10.11.1.2 " /proc/net/nf_conntrack 2>/dev/null | grep -vcE "$pat")
+	now=$(date +%s)
+	if [ "${n:-0}" -gt 0 ]; then
+		leak_hits=$(( leak_hits + 1 ))
+		[ $leak_hits -ge 2 ] || return		# two consecutive periods, not one stray entry
+		echo $n > $LEAK; echo "$sample" > $LEAKS
+		if [ $leak_paged -eq 0 ] || [ $(( now - leak_paged )) -ge $leak_repage ]; then
+			page "CELLULAR LEAK: house traffic on 5G while the router says fibre" "$n flow(s) from the house reached the modem with no failover declared: ${sample}Something on the router routes past the tracker."
+			leak_paged=$now
 		fi
-	elif [ $house = cellular ]; then
-		idle=$(( idle + 1 ))
-		if [ $idle -ge $house_idle_max ]; then
-			house=primary; echo primary > $HOUSE
-			logger -t velo540-failover "no house traffic on $dev for $(( idle * period )) s: house is back on its own WAN, stopping cake-autorate"
-			[ -x /etc/init.d/cake-autorate ] && /etc/init.d/cake-autorate stop >/dev/null 2>&1
-			/etc/hotplug.d/iface/90-velo540-led >/dev/null 2>&1
-		fi
+	else
+		leak_hits=0
+		if [ -e $LEAK ]; then rm -f $LEAK $LEAKS; leak_paged=0; logger -t velo540-failover "cellular leak cleared: no house flows on the modem"; fi
 	fi
+}
+house_check() {
+	local sig now age
+	now=$(date +%s)
+	sig=$(cat $SIGNAL 2>/dev/null); sig=${sig:-primary}
+	if [ -e $SIGNAL ]; then age=$(( now - $(date -r $SIGNAL +%s) )); else age=-1; fi	# busybox here has no stat
+	echo $age > $AGE
+	if [ "$sig" != "$house" ]; then
+		house=$sig; echo $house > $HOUSE; house_since=$now
+		if [ $house = cellular ]; then
+			logger -t velo540-failover "router says the house is on cellular: starting cake-autorate"
+			[ -x /etc/init.d/cake-autorate ] && /etc/init.d/cake-autorate start >/dev/null 2>&1
+		else
+			logger -t velo540-failover "router says the house is back on fibre: stopping cake-autorate"
+			[ -x /etc/init.d/cake-autorate ] && /etc/init.d/cake-autorate stop >/dev/null 2>&1
+		fi
+		/etc/hotplug.d/iface/90-velo540-led >/dev/null 2>&1
+	fi
+	[ $house = primary ] && [ $(( now - house_since )) -ge $leak_grace ] && leak_check
 }
 while :; do
 	house_check

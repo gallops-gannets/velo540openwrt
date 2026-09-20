@@ -1,0 +1,20 @@
+#!/bin/sh
+# /cgi-bin/house: the router tells this box whether the house is on cellular.
+# router-failover calls GET /cgi-bin/house?state=primary|cellular&token=...
+# on every transition and as a heartbeat (~1/min).  velo540-failover reads
+# /tmp/velo540-house.signal (its mtime is the heartbeat) and drives
+# cake-autorate, the blue LED and the leak detector from it.
+# Guarded by a shared token (/etc/velo540-house.secret here, uci
+# failover.@tracker[0].velo_token on the router): the router masquerades its
+# LAN onto 10.11.1.2, so the source address alone proves nothing.
+echo "Content-Type: text/plain"; echo
+tok=$(cat /etc/velo540-house.secret 2>/dev/null)
+state=; t=
+for kv in $(echo "$QUERY_STRING" | tr '&' ' '); do
+	case $kv in state=*) state=${kv#state=};; token=*) t=${kv#token=};; esac
+done
+[ "$REMOTE_ADDR" = 10.11.1.2 ] || { echo "refused"; exit 0; }
+[ -n "$tok" ] && [ "$t" = "$tok" ] || { logger -t velo540-house "refused signal from $REMOTE_ADDR: bad token"; echo "refused"; exit 0; }
+case $state in primary|cellular) ;; *) echo "bad state"; exit 0;; esac
+echo $state > /tmp/velo540-house.signal.tmp && mv /tmp/velo540-house.signal.tmp /tmp/velo540-house.signal
+echo ok

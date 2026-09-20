@@ -125,12 +125,20 @@ backgrounded.
   `/etc/init.d` is not preserved and the installer's copy vanished on the kernel-21
   upgrade) is started by `velo540-failover` only while the house is on cellular and
   stopped on recovery: its reflector pings follow the default route, so left running
-  they would measure the fibre and cost ~3 GB/month.  "House on cellular" is detected
-  from traffic on GE2 (more than `house_thr_bytes`, default 50 kB, per probe period in
-  either direction; back after `house_idle_periods`, default 30 = 5 min, of quiet), NOT
-  from this box's own probes, which keep answering through router → GE2 → cellular
-  during a house failover.  The same state lights the blue logo LED and is `house` in
-  status.json, with `cell_cycle_mb` (vnstat2) beside it.
+  they would measure the fibre and cost ~3 GB/month.  "House on cellular" is what the
+  ROUTER says: `router-failover` GETs `/cgi-bin/house?state=primary|cellular&token=…`
+  on every transition and about once a minute (firewall rule `uplink_house`: tcp/80
+  from 10.11.1.2 on `uplink` only; the token is `/etc/velo540-house.secret`, in
+  sysupgrade.conf, because the router masquerades its LAN onto 10.11.1.2).  The
+  earlier byte-count heuristic on GE2 is gone — it paged on three Macs' encrypted DNS
+  leaking through a pinned probe route with the router on fibre (2026-09-20).  While
+  the router says fibre, `velo540-failover` runs a LEAK DETECTOR: any conntrack flow
+  from 10.11.1.2 that is not one of the router's velo-path probes (`house_allow`,
+  default `208.67.222.222 76.76.2.0`) and not to this box pages "CELLULAR LEAK" with
+  the flows (two consecutive periods; `leak_grace` 180 s after a failover ends;
+  `leak_repage` 3600 s).  The same state lights the blue logo LED and is `house` in
+  status.json, with `house_age` (s since the router last spoke, -1 never), `leak`,
+  `leak_sample` and `cell_cycle_mb` (vnstat2) beside it.
   vnstat2 meters `qmapmux00` with the cycle rolling on the 7th, database in
   `/etc/vnstat`.  The router side (`cellwan` on its spare port, metric 50, and the
   `router-failover` tracker) lives in home-network-ops `provisioning/router/`.
