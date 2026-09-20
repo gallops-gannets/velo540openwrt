@@ -16,17 +16,18 @@ miss=0; state=primary; saved=; echo primary > $STATE
 # House-wide failover is the ROUTER's decision (router-failover withdraws its
 # fibre default and sends the house to us on GE2/uplink2).  This box's own
 # probes keep answering through that very path, so its own state never flips;
-# the house being on cellular is detected from traffic arriving on uplink2.
+# the house being on cellular is detected from traffic on uplink2 (both
+# directions: a download shows up mostly as bytes towards the house).
 # While it is: cake-autorate runs (its reflector pings then follow the cellular
 # path and cost ~6 MB/h only while there is load) and the logo LED is blue.
 HOUSE=/tmp/velo540-house.state; house=primary; echo primary > $HOUSE
-house_thr=$(uci -q get velo540.@cell[0].house_thr_bytes); house_thr=${house_thr:-200000}   # per period
+house_thr=$(uci -q get velo540.@cell[0].house_thr_bytes); house_thr=${house_thr:-50000}   # rx+tx per period; GE2 carries nothing otherwise
 house_idle_max=$(uci -q get velo540.@cell[0].house_idle_periods); house_idle_max=${house_idle_max:-30}
 rx_prev=; idle=0
 house_check() {
 	local dev rx delta
 	network_get_device dev uplink2; [ -n "$dev" ] || return
-	rx=$(cat /sys/class/net/$dev/statistics/rx_bytes 2>/dev/null) || return
+	rx=$(( $(cat /sys/class/net/$dev/statistics/rx_bytes 2>/dev/null || echo 0) + $(cat /sys/class/net/$dev/statistics/tx_bytes 2>/dev/null || echo 0) ))
 	delta=$(( rx - ${rx_prev:-$rx} )); rx_prev=$rx
 	if [ $delta -gt $house_thr ]; then
 		idle=0
