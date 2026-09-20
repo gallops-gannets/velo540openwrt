@@ -6,8 +6,11 @@
 #              its fibre default at the moment the router fails over, the packets
 #              are dropped by the firewall instead of looping back into the
 #              router's LAN via GE1.
-#   sqm.cell = CAKE on the cellular interface itself (rates are the floor;
-#              cake-autorate moves them while running during a failover).
+#   sqm.cell = CAKE on the cellular interface itself.  The configured rates sit
+#              ABOVE what the link can do, so on its own CAKE only adds per-host
+#              fairness and diffserv and never caps this box's own cellular use
+#              (or a speed test); cake-autorate pulls the rates down to the real
+#              link rate while the house is on cellular.
 # Idempotent: only seeds what is missing, so a preserved config is untouched.
 uci -q get network.uplink2 >/dev/null || uci -q batch <<'UCI'
 set network.uplink2=interface
@@ -70,8 +73,8 @@ if [ -f /etc/config/sqm ] && ! uci -q get sqm.cell >/dev/null; then
 set sqm.cell=queue
 set sqm.cell.enabled='1'
 set sqm.cell.interface='qmapmux00'
-set sqm.cell.download='80000'
-set sqm.cell.upload='10000'
+set sqm.cell.download='300000'
+set sqm.cell.upload='40000'
 set sqm.cell.qdisc='cake'
 set sqm.cell.script='piece_of_cake.qos'
 set sqm.cell.linklayer='ethernet'

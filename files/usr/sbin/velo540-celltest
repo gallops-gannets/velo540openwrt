@@ -6,11 +6,18 @@
 # and after moving antennas: chains within ~3 dB of each other and SINR above
 # 10 dB is the target; today's baseline is a 10-14 dB spread and SINR near 0.
 #
-# Usage: velo540-celltest yes|quick|small
+# Usage: velo540-celltest yes|quick|small|medium
 #   yes   = full run (~600 MB of plan data)
 #   quick = radio only, free
-#   small = ~3.5 MB: 2 x 1.5 MB down, 0.5 MB up, ping; one-line speed summary
-#           (what the dashboard's Speed button and failover test report)
+#   small = ~3.5 MB: 2 x 1.5 MB down, 0.5 MB up, ping; one-line "is it alive"
+#           number (what the failover test reports).  It never leaves TCP slow
+#           start, so it reads 20-40 Mbps on a link that does 250: a floor.
+#   medium = what the link can do NOW, ~100-150 MB: two streams each way,
+#           time-boxed, throughput read from the interface counters over a
+#           3-4 s window that starts 1.5 s in, so slow start is excluded.
+#           At 60 ms RTT a stream ramps in ~0.5 s and ~4 MB; steady state at
+#           250 Mbps costs ~30 MB per second measured, which is why there is
+#           no cheap way to see the ceiling.  (Dashboard Speed button.)
 P=/dev/ttyUSB3
 IF=$(ubus call network.interface.wwan status 2>/dev/null | jsonfilter -e '@.l3_device')
 [ -n "$IF" ] || IF=wwan0
@@ -53,6 +60,32 @@ if [ "$1" = small ]; then
 	*) CELL="?";;
 	esac
 	echo "down ~${DL} Mbps, up ~${UL:-?} Mbps (3 MB burst: a floor, not the link ceiling), ping ${PG:-?} ms ($CELL; 3.5 MB used)"
+	exit 0
+fi
+if [ "$1" = medium ]; then
+	rx() { cat /sys/class/net/$IF/statistics/rx_bytes; }
+	tx() { cat /sys/class/net/$IF/statistics/tx_bytes; }
+	R0=$(rx)
+	curl -s -m 6 -4 --interface "$IF" -o /dev/null "$DOWN" & p1=$!
+	curl -s -m 6 -4 --interface "$IF" -o /dev/null "$DOWN" & p2=$!
+	sleep 1.5; R1=$(rx); sleep 4; R2=$(rx)
+	wait $p1 $p2 2>/dev/null
+	DL=$(( (R2 - R1) * 8 / 4 / 1000000 ))
+	T0=$(tx)
+	head -c 8000000 /dev/zero | curl -s -m 7 -4 --interface "$IF" -o /dev/null -X POST --data-binary @- "$UP" & u1=$!
+	head -c 8000000 /dev/zero | curl -s -m 7 -4 --interface "$IF" -o /dev/null -X POST --data-binary @- "$UP" & u2=$!
+	sleep 1.5; T1=$(tx); sleep 3; T2=$(tx)
+	wait $u1 $u2 2>/dev/null
+	UL=$(( (T2 - T1) * 8 / 3 / 1000000 ))
+	USED=$(( ($(rx) - R0 + $(tx) - T0) / 1000000 ))
+	PG=$(ping -I "$IF" -c3 -W3 9.9.9.9 2>/dev/null | tail -1 | sed 's:.*= ::;s:/.*::')
+	Q=$(at 'AT+QENG="servingcell"'); C=$(echo "$Q" | grep -m1 QENG | tr -d ' "')
+	case "$C" in
+	*NR5G-SA*) set -- $(echo "$C" | cut -d, -f10-15 | tr ',' ' '); CELL="5G SA n$2 RSRP $4 SINR $6";;
+	*LTE*) CELL="LTE";;
+	*) CELL="?";;
+	esac
+	echo "down ${DL} Mbps, up ${UL} Mbps (steady state, 2 streams), ping ${PG:-?} ms ($CELL; ${USED} MB used)"
 	exit 0
 fi
 if [ "$1" != quick ] && [ "$1" != yes ]; then
