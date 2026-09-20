@@ -1,0 +1,18 @@
+#!/bin/sh /etc/rc.common
+# cake-autorate (https://github.com/lynxthecat/cake-autorate), installed into
+# /root/cake-autorate by its setup.sh (kept across sysupgrade via
+# /etc/sysupgrade.conf).  The installer writes this same init script, but
+# /etc/init.d is not preserved by sysupgrade, so it ships in the image too.
+# Deliberately NOT enabled at boot: velo540-failover starts it when the house
+# goes onto cellular and stops it on recovery (see README, "House-wide failover").
+START=97
+STOP=4
+USE_PROCD=1
+
+start_service() {
+	[ -x /root/cake-autorate/launcher.sh ] || return 0
+	procd_open_instance
+	procd_set_param command /root/cake-autorate/launcher.sh
+	procd_set_param respawn
+	procd_close_instance
+}

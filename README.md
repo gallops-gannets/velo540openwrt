@@ -120,7 +120,8 @@ backgrounded.
   shapes `qmapmux00` itself with `diffserv4`; `velo540-ttl` also marks everything the
   box originates CS6 so management traffic (Tailscale, SSH, witness, PDU) rides above a
   bulk download.  cake-autorate (installed from GitHub into `/root/cake-autorate`, kept
-  by sysupgrade.conf, needs bash + fping) is started by `velo540-failover` only while
+  by sysupgrade.conf, needs bash + fping; its init script ships in the image because
+  `/etc/init.d` is not preserved and the installer's copy vanished on the kernel-21 upgrade) is started by `velo540-failover` only while
   the house is on cellular and stopped on recovery: its reflector pings follow the
   default route, so left running they would measure the fibre and cost ~3 GB/month.
   vnstat2 meters `qmapmux00` with the cycle rolling on the 7th, database in
