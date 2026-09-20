@@ -122,9 +122,15 @@ backgrounded.
   box originates CS6 so management traffic (Tailscale, SSH, witness, PDU) rides above a
   bulk download.  cake-autorate (installed from GitHub into `/root/cake-autorate`, kept
   by sysupgrade.conf, needs bash + fping; its init script ships in the image because
-  `/etc/init.d` is not preserved and the installer's copy vanished on the kernel-21 upgrade) is started by `velo540-failover` only while
-  the house is on cellular and stopped on recovery: its reflector pings follow the
-  default route, so left running they would measure the fibre and cost ~3 GB/month.
+  `/etc/init.d` is not preserved and the installer's copy vanished on the kernel-21
+  upgrade) is started by `velo540-failover` only while the house is on cellular and
+  stopped on recovery: its reflector pings follow the default route, so left running
+  they would measure the fibre and cost ~3 GB/month.  "House on cellular" is detected
+  from traffic on GE2 (more than `house_thr_bytes`, default 50 kB, per probe period in
+  either direction; back after `house_idle_periods`, default 30 = 5 min, of quiet), NOT
+  from this box's own probes, which keep answering through router → GE2 → cellular
+  during a house failover.  The same state lights the blue logo LED and is `house` in
+  status.json, with `cell_cycle_mb` (vnstat2) beside it.
   vnstat2 meters `qmapmux00` with the cycle rolling on the 7th, database in
   `/etc/vnstat`.  The router side (`cellwan` on its spare port, metric 50, and the
   `router-failover` tracker) lives in home-network-ops `provisioning/router/`.
