@@ -12,8 +12,42 @@ fails=$(uci -q get velo540.@cell[0].probe_fails); fails=${fails:-3}
 . /lib/functions/network.sh
 STATE=/tmp/velo540-failover.state
 probes="1.1.1.1 8.8.8.8"
-miss=0; state=primary; echo primary > $STATE
+miss=0; state=primary; saved=; echo primary > $STATE
+# House-wide failover is the ROUTER's decision (router-failover withdraws its
+# fibre default and sends the house to us on GE2/uplink2).  This box's own
+# probes keep answering through that very path, so its own state never flips;
+# the house being on cellular is detected from traffic arriving on uplink2.
+# While it is: cake-autorate runs (its reflector pings then follow the cellular
+# path and cost ~6 MB/h only while there is load) and the logo LED is blue.
+HOUSE=/tmp/velo540-house.state; house=primary; echo primary > $HOUSE
+house_thr=$(uci -q get velo540.@cell[0].house_thr_bytes); house_thr=${house_thr:-200000}   # per period
+house_idle_max=$(uci -q get velo540.@cell[0].house_idle_periods); house_idle_max=${house_idle_max:-30}
+rx_prev=; idle=0
+house_check() {
+	local dev rx delta
+	network_get_device dev uplink2; [ -n "$dev" ] || return
+	rx=$(cat /sys/class/net/$dev/statistics/rx_bytes 2>/dev/null) || return
+	delta=$(( rx - ${rx_prev:-$rx} )); rx_prev=$rx
+	if [ $delta -gt $house_thr ]; then
+		idle=0
+		if [ $house = primary ]; then
+			house=cellular; echo cellular > $HOUSE
+			logger -t velo540-failover "house traffic arriving on $dev: house is on cellular, starting cake-autorate"
+			[ -x /etc/init.d/cake-autorate ] && /etc/init.d/cake-autorate start >/dev/null 2>&1
+			/etc/hotplug.d/iface/90-velo540-led >/dev/null 2>&1
+		fi
+	elif [ $house = cellular ]; then
+		idle=$(( idle + 1 ))
+		if [ $idle -ge $house_idle_max ]; then
+			house=primary; echo primary > $HOUSE
+			logger -t velo540-failover "no house traffic on $dev for $(( idle * period )) s: house is back on its own WAN, stopping cake-autorate"
+			[ -x /etc/init.d/cake-autorate ] && /etc/init.d/cake-autorate stop >/dev/null 2>&1
+			/etc/hotplug.d/iface/90-velo540-led >/dev/null 2>&1
+		fi
+	fi
+}
 while :; do
+	house_check
 	network_get_gateway gw wan; network_get_device dev wan
 	if [ -z "$gw" ] || [ -z "$dev" ]; then sleep $period; continue; fi
 	for t in $probes; do ip route replace $t via $gw dev $dev metric 5 2>/dev/null; done
@@ -21,23 +55,18 @@ while :; do
 	if [ $ok -eq 1 ]; then
 		miss=0
 		if [ $state = failover ]; then
-			ip route replace default via $gw dev $dev metric 10; state=primary; echo primary > $STATE
+			if [ -n "$saved" ]; then ip route replace $saved; else ip route replace default via $gw dev $dev metric 10; fi; state=primary; echo primary > $STATE
 			logger -t velo540-failover "primary WAN answers again: default route restored"
 			/etc/hotplug.d/iface/90-velo540-led >/dev/null 2>&1
-			# cake-autorate only runs while the house is on cellular: its reflector
-			# pings follow the default route (so they would measure the fibre
-			# when the fibre is up) and cost ~3 GB/month if left running.
-			[ -x /etc/init.d/cake-autorate ] && /etc/init.d/cake-autorate stop >/dev/null 2>&1
 		fi
 	else
 		miss=$(( miss + 1 ))
 		# a DHCP renewal on wan re-adds its default route behind our back
 		[ $state = failover ] && ip route del default via $gw dev $dev 2>/dev/null
 		if [ $state = primary ] && [ $miss -ge $fails ]; then
-			ip route del default via $gw dev $dev 2>/dev/null; state=failover; echo failover > $STATE
+			saved=$(ip route show default dev $dev | head -1); ip route del default via $gw dev $dev 2>/dev/null; state=failover; echo failover > $STATE
 			logger -t velo540-failover "primary WAN dead ($miss misses): default withdrawn, cellular carries traffic"
 			/etc/hotplug.d/iface/90-velo540-led >/dev/null 2>&1
-			[ -x /etc/init.d/cake-autorate ] && /etc/init.d/cake-autorate start >/dev/null 2>&1
 		fi
 	fi
 	sleep $period

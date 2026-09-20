@@ -8,12 +8,20 @@ wan_up=0; cell_up=0
 network_is_up wan && wan_up=1
 [ "$(cat /tmp/velo540-failover.state 2>/dev/null)" = failover ] && wan_up=0
 for i in wwan cellular; do network_is_up $i && cell_up=1; done
+# own=this box lost its WAN and runs on cellular; house=the router has sent the
+# house to us over GE2 (velo540-failover writes it from uplink2 traffic).
+own=0; [ $wan_up -eq 0 ] && [ $cell_up -eq 1 ] && own=1
+house=0; [ "$(cat /tmp/velo540-house.state 2>/dev/null)" = cellular ] && [ $cell_up -eq 1 ] && house=1
 LED=/sys/class/leds/pca963x:blue:logo/brightness
-if [ $wan_up -eq 0 ] && [ $cell_up -eq 1 ]; then
+if [ $own -eq 1 ] || [ $house -eq 1 ]; then
 	[ -w "$LED" ] && echo 255 > "$LED"
-	[ "$(uci -q get wireless.radio0.disabled)" = 0 ] || { touch /tmp/velo540-wifi-auto; velo540-wifi on >/dev/null; }
 else
 	[ -w "$LED" ] && echo 0 > "$LED"
+fi
+# maintenance WiFi only for this box's own failover (the house LAN is fine otherwise)
+if [ $own -eq 1 ]; then
+	[ "$(uci -q get wireless.radio0.disabled)" = 0 ] || { touch /tmp/velo540-wifi-auto; velo540-wifi on >/dev/null; }
+else
 	[ -e /tmp/velo540-wifi-auto ] && { rm -f /tmp/velo540-wifi-auto; velo540-wifi off >/dev/null; }
 fi
 exit 0

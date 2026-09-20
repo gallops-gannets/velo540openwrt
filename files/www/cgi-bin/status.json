@@ -13,6 +13,9 @@ wit=""; for f in /tmp/velo540-witness/*.state; do [ -e "$f" ] || continue; wit="
 t=$(( $(D 0x4e) * 256 + $(D 0x4f) )); [ $t -ge 65528 ] && rpm=0 || rpm=$(( 3932160 / (t >> 3) ))
 core=null; for h in /sys/class/hwmon/hwmon*; do [ "$(cat $h/name 2>/dev/null)" = coretemp ] && core=$(( $(cat $h/temp2_input 2>/dev/null || cat $h/temp1_input) / 1000 )); done
 cellinfo=$(velo540-cell status 2>/dev/null | tr "\n" " " | tr -d "\"")
+house=$(cat /tmp/velo540-house.state 2>/dev/null); house=${house:-primary}
+# cellular bytes this billing cycle (vnstat2, MonthRotate 7), MB
+cellmb=$(vnstat -i "$cellif" --oneline b 2>/dev/null | cut -d';' -f11); cellmb=$(( ${cellmb:-0} / 1000000 ))
 led() { cat /sys/class/leds/pca963x:$1:logo/brightness 2>/dev/null || echo 0; }
-printf '{"host":"%s","uptime":%s,"load":"%s","temp_cpu":%d,"temp_board":%d,"temp_core":%s,"fan_rpm":%d,"fan_duty":%d,"wan_up":%d,"wan_ip":"%s","cellular":%d,"wifi":"%s","dsa":"%s","leds":{"green":%s,"red":%s,"blue":%s},"witness":{%s"_":""},"cell":"%s","ts":"%s"}\n' \
- "$(cat /proc/sys/kernel/hostname)" "$(cut -d. -f1 /proc/uptime)" "$(cut -d' ' -f1 /proc/loadavg)" "$(D 0x02)" "$(D 0x00)" "$core" "$rpm" "$(D 0x40)" "$wan" "$wanip" "$cell" "$(velo540-wifi status 2>/dev/null | cut -d' ' -f2)" "$(cat /sys/module/vc_edge5x0_dsa/parameters/dsa_mask 2>/dev/null)" "$(led green)" "$(led red)" "$(led blue)" "$wit" "$cellinfo" "$(tailscale ip -4 2>/dev/null)"
+printf '{"host":"%s","uptime":%s,"load":"%s","temp_cpu":%d,"temp_board":%d,"temp_core":%s,"fan_rpm":%d,"fan_duty":%d,"wan_up":%d,"wan_ip":"%s","cellular":%d,"wifi":"%s","dsa":"%s","leds":{"green":%s,"red":%s,"blue":%s},"witness":{%s"_":""},"cell":"%s","house":"%s","cell_cycle_mb":%d,"ts":"%s"}\n' \
+ "$(cat /proc/sys/kernel/hostname)" "$(cut -d. -f1 /proc/uptime)" "$(cut -d' ' -f1 /proc/loadavg)" "$(D 0x02)" "$(D 0x00)" "$core" "$rpm" "$(D 0x40)" "$wan" "$wanip" "$cell" "$(velo540-wifi status 2>/dev/null | cut -d' ' -f2)" "$(cat /sys/module/vc_edge5x0_dsa/parameters/dsa_mask 2>/dev/null)" "$(led green)" "$(led red)" "$(led blue)" "$wit" "$cellinfo" "$house" "$cellmb" "$(tailscale ip -4 2>/dev/null)"
