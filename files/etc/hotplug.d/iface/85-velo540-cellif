@@ -1,0 +1,32 @@
+#!/bin/sh
+# The cellular data interface is a QMAP multiplex link whose NAME IS NOT STABLE:
+# a modem reset (velo540-cell restart, the dashboard's Restart button) brought it
+# back as qmapmux10 after a life as qmapmux00 (2026-09-20 21:33Z), and everything
+# pinned to the old name silently stopped: vnstat metered nothing (and the
+# status.json CGI aborted on its error text, so the dashboard read the box as
+# unreachable), CAKE was not on the new link at all (plain fq_codel), and
+# cake-autorate's config named a device that no longer existed.
+# So on every ifup/ifupdate of wwan, re-point all three at $DEVICE.
+[ "$INTERFACE" = wwan ] || exit 0
+case "$ACTION" in ifup|ifupdate) ;; *) exit 0;; esac
+[ -n "$DEVICE" ] || exit 0
+changed=""
+# metering: add the new link to vnstat's database and config (old names keep
+# their history, so the cycle total is the sum -- status.json sums them)
+if ! vnstat --dbiflist 2>/dev/null | grep -qw "$DEVICE"; then
+	vnstat --add -i "$DEVICE" >/dev/null 2>&1 && changed="$changed vnstat"
+fi
+uci -q get vnstat.@vnstat[0].interface | grep -qw "$DEVICE" || { uci add_list vnstat.@vnstat[0].interface="$DEVICE"; uci commit vnstat; /etc/init.d/vnstat restart >/dev/null 2>&1; }
+# CAKE: sqm.cell must name the live link or the house's cellular traffic is unshaped
+if [ "$(uci -q get sqm.cell.interface)" != "$DEVICE" ]; then
+	uci set sqm.cell.interface="$DEVICE"; uci commit sqm
+	/etc/init.d/sqm restart >/dev/null 2>&1 && changed="$changed cake"
+fi
+# cake-autorate (runs only while the house is on cellular)
+cfg=/root/cake-autorate/config.primary.sh
+if [ -f "$cfg" ] && ! grep -q "^ul_if=$DEVICE\$" "$cfg"; then
+	sed -i -e "s/^dl_if=.*/dl_if=ifb4$DEVICE/" -e "s/^ul_if=.*/ul_if=$DEVICE/" "$cfg" && changed="$changed autorate"
+	pgrep -f cake-autorate.sh >/dev/null 2>&1 && /etc/init.d/cake-autorate restart >/dev/null 2>&1
+fi
+[ -n "$changed" ] && logger -t velo540-cellif "cellular link is $DEVICE: re-pointed$changed"
+exit 0

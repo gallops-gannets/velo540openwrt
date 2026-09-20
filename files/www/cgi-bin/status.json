@@ -18,8 +18,18 @@ house=$(cat /tmp/velo540-house.state 2>/dev/null); house=${house:-primary}
 hage=$(cat /tmp/velo540-house.age 2>/dev/null); hage=${hage:--1}
 leak=$(cat /tmp/velo540-leak.state 2>/dev/null); leak=${leak:-0}
 leaks=$(cat /tmp/velo540-leak.sample 2>/dev/null | tr -d '"\\' | head -c 300)
-# cellular bytes this billing cycle (vnstat2, MonthRotate 7), MB
-cellmb=$(vnstat -i "$cellif" --oneline b 2>/dev/null | cut -d';' -f11); cellmb=$(( ${cellmb:-0} / 1000000 ))
+# cellular bytes this billing cycle (vnstat2, MonthRotate 7), MB -- summed over every
+# qmapmux* link vnstat knows, because a modem reset renames the link (qmapmux00 ->
+# qmapmux10, 2026-09-20) and the old name keeps the earlier part of the cycle.
+# Guarded: vnstat prints its errors on stdout, and an error string in $(( )) aborted
+# this whole script for the 30 minutes the dashboard called the box unreachable.
+cellb=0
+for i in $(vnstat --dbiflist 2>/dev/null | sed 's/^[^:]*://'); do
+	case $i in qmapmux*|wwan*) ;; *) continue;; esac
+	b=$(vnstat -i "$i" --oneline b 2>/dev/null | grep -v '^Error' | cut -d';' -f11)
+	case $b in ''|*[!0-9]*) ;; *) cellb=$(( cellb + b ));; esac
+done
+cellmb=$(( cellb / 1000000 ))
 led() { cat /sys/class/leds/pca963x:$1:logo/brightness 2>/dev/null || echo 0; }
 printf '{"host":"%s","uptime":%s,"load":"%s","temp_cpu":%d,"temp_board":%d,"temp_core":%s,"fan_rpm":%d,"fan_duty":%d,"wan_up":%d,"wan_ip":"%s","cellular":%d,"wifi":"%s","dsa":"%s","leds":{"green":%s,"red":%s,"blue":%s},"witness":{%s"_":""},"cell":"%s","house":"%s","house_age":%d,"leak":%d,"leak_sample":"%s","cell_cycle_mb":%d,"ts":"%s"}\n' \
  "$(cat /proc/sys/kernel/hostname)" "$(cut -d. -f1 /proc/uptime)" "$(cut -d' ' -f1 /proc/loadavg)" "$(D 0x02)" "$(D 0x00)" "$core" "$rpm" "$(D 0x40)" "$wan" "$wanip" "$cell" "$(velo540-wifi status 2>/dev/null | cut -d' ' -f2)" "$(cat /sys/module/vc_edge5x0_dsa/parameters/dsa_mask 2>/dev/null)" "$(led green)" "$(led red)" "$(led blue)" "$wit" "$cellinfo" "$house" "$hage" "$leak" "$leaks" "$cellmb" "$(tailscale ip -4 2>/dev/null)"

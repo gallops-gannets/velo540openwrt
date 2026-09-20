@@ -142,6 +142,15 @@ backgrounded.
   vnstat2 meters `qmapmux00` with the cycle rolling on the 7th, database in
   `/etc/vnstat`.  The router side (`cellwan` on its spare port, metric 50, and the
   `router-failover` tracker) lives in home-network-ops `provisioning/router/`.
+  **The link's name is not stable**: a modem reset (`velo540-cell restart`, the
+  dashboard's Restart button) brought it back as `qmapmux10` after a life as
+  `qmapmux00` (2026-09-20), and vnstat, `sqm.cell` and cake-autorate's config were all
+  pinned to the old name -- no metering, no CAKE, and `status.json` aborting on
+  vnstat's error text so the dashboard read the box as unreachable.
+  `/etc/hotplug.d/iface/85-velo540-cellif` now re-points all three on every ifup of
+  `wwan`, and `status.json` sums the cycle over every `qmapmux*` in vnstat's database.
+  Resolve the live name with `ubus call network.interface.wwan status | jsonfilter -e
+  '@.l3_device'`, never hard-code it.
 * **Cellular measurement**: `velo540-celltest` (add `quick` to skip transfers) prints
   the four receive chains sampled under load, the serving cell and throughput.  Use it
   to score antenna moves: the chains should land within ~3 dB of each other with SINR
