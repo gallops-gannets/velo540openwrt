@@ -24,13 +24,20 @@ while :; do
 			ip route replace default via $gw dev $dev metric 10; state=primary; echo primary > $STATE
 			logger -t velo540-failover "primary WAN answers again: default route restored"
 			/etc/hotplug.d/iface/90-velo540-led >/dev/null 2>&1
+			# cake-autorate only runs while the house is on cellular: its reflector
+			# pings follow the default route (so they would measure the fibre
+			# when the fibre is up) and cost ~3 GB/month if left running.
+			[ -x /etc/init.d/cake-autorate ] && /etc/init.d/cake-autorate stop >/dev/null 2>&1
 		fi
 	else
 		miss=$(( miss + 1 ))
+		# a DHCP renewal on wan re-adds its default route behind our back
+		[ $state = failover ] && ip route del default via $gw dev $dev 2>/dev/null
 		if [ $state = primary ] && [ $miss -ge $fails ]; then
 			ip route del default via $gw dev $dev 2>/dev/null; state=failover; echo failover > $STATE
 			logger -t velo540-failover "primary WAN dead ($miss misses): default withdrawn, cellular carries traffic"
 			/etc/hotplug.d/iface/90-velo540-led >/dev/null 2>&1
+			[ -x /etc/init.d/cake-autorate ] && /etc/init.d/cake-autorate start >/dev/null 2>&1
 		fi
 	fi
 	sleep $period

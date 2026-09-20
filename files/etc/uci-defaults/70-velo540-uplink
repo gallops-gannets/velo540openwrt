@@ -1,0 +1,83 @@
+#!/bin/sh
+# House-wide cellular failover, velo side (home-network-ops docs/house-failover-spec.md).
+#   uplink2  = GE2 (eth5), a /30 to the router's spare port: the house's way in.
+#   cell     = the cellular interface in its OWN zone, so the only place uplink
+#              traffic can ever be forwarded is cellular.  If the velo still has
+#              its fibre default at the moment the router fails over, the packets
+#              are dropped by the firewall instead of looping back into the
+#              router's LAN via GE1.
+#   sqm.cell = CAKE on the cellular interface itself (rates are the floor;
+#              cake-autorate moves them while running during a failover).
+# Idempotent: only seeds what is missing, so a preserved config is untouched.
+uci -q get network.uplink2 >/dev/null || uci -q batch <<'UCI'
+set network.uplink2=interface
+set network.uplink2.proto='static'
+set network.uplink2.device='eth5'
+set network.uplink2.ipaddr='10.11.1.1'
+set network.uplink2.netmask='255.255.255.252'
+UCI
+uci commit network
+if ! uci -q get firewall.cell >/dev/null; then
+	uci -q batch <<'UCI'
+set firewall.cell=zone
+set firewall.cell.name='cell'
+set firewall.cell.network='wwan'
+set firewall.cell.input='REJECT'
+set firewall.cell.output='ACCEPT'
+set firewall.cell.forward='REJECT'
+set firewall.cell.masq='1'
+set firewall.cell.mtu_fix='1'
+set firewall.uplink=zone
+set firewall.uplink.name='uplink'
+set firewall.uplink.network='uplink2'
+set firewall.uplink.input='REJECT'
+set firewall.uplink.output='ACCEPT'
+set firewall.uplink.forward='REJECT'
+set firewall.fwd_uplink_cell=forwarding
+set firewall.fwd_uplink_cell.src='uplink'
+set firewall.fwd_uplink_cell.dest='cell'
+set firewall.fwd_lan_cell=forwarding
+set firewall.fwd_lan_cell.src='lan'
+set firewall.fwd_lan_cell.dest='cell'
+set firewall.uplink_ping=rule
+set firewall.uplink_ping.name='Allow-Ping-uplink'
+set firewall.uplink_ping.src='uplink'
+set firewall.uplink_ping.proto='icmp'
+set firewall.uplink_ping.target='ACCEPT'
+UCI
+	# wwan moves out of the wan zone into cell
+	uci -q del_list firewall.@zone[1].network='wwan'
+	uci commit firewall
+fi
+if [ -f /etc/config/sqm ] && ! uci -q get sqm.cell >/dev/null; then
+	uci -q batch <<'UCI'
+set sqm.cell=queue
+set sqm.cell.enabled='1'
+set sqm.cell.interface='qmapmux00'
+set sqm.cell.download='80000'
+set sqm.cell.upload='10000'
+set sqm.cell.qdisc='cake'
+set sqm.cell.script='piece_of_cake.qos'
+set sqm.cell.linklayer='ethernet'
+set sqm.cell.overhead='44'
+set sqm.cell.qdisc_advanced='1'
+set sqm.cell.ingress_ecn='ECN'
+set sqm.cell.egress_ecn='ECN'
+set sqm.cell.qdisc_really_really_advanced='1'
+set sqm.cell.iqdisc_opts='diffserv4 nat dual-dsthost ingress rtt 100ms'
+set sqm.cell.eqdisc_opts='diffserv4 nat dual-srchost ack-filter rtt 100ms'
+UCI
+	uci commit sqm
+fi
+# Metering: vnstat2 on the cellular interface, cycle rolling on the plan's day
+# (T-Mobile resets on the 7th), database on the internal disk so it survives
+# reboots (the default /var/lib is tmpfs).
+if [ -f /etc/vnstat.conf ]; then
+	sed -i -e 's|^;\?DatabaseDir .*|DatabaseDir "/etc/vnstat"|' -e 's|^;\?MonthRotate .*|MonthRotate 7|' /etc/vnstat.conf
+	mkdir -p /etc/vnstat
+	uci -q get vnstat.@vnstat[0] >/dev/null || uci add vnstat vnstat >/dev/null
+	uci -q get vnstat.@vnstat[0].interface | grep -q qmapmux00 || uci add_list vnstat.@vnstat[0].interface='qmapmux00'
+	uci commit vnstat
+fi
+grep -q '^/root/cake-autorate' /etc/sysupgrade.conf 2>/dev/null || echo '/root/cake-autorate' >> /etc/sysupgrade.conf
+exit 0

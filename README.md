@@ -88,15 +88,18 @@ backgrounded.
   as a VLAN tag and refuses it.  Measured on one RM520N-GL on 5G SA n41: 104 Mbps on USB 2
   unaggregated, 240-290 Mbps with all three.  Note `network.wwan.device` names the modem's
   sysfs path, which changes with the bus it enumerates on (`usb3/3-1`, not `usb1/1-1`).
-  **Caveat, unresolved — the multiplex patch is load bearing**: on the tested box a
-  non-multiplexed bearer no longer connects at all.  Proven by restoring the stock proto
-  from a pristine copy, clearing the option and deleting the stale mux links: the modem
-  still would not connect across three attempts and a ModemManager restart, and only
-  recovered when multiplexing was turned back on.  The patch is therefore not the cause.
-  If it ever fails to apply after a sysupgrade, the box loses cellular entirely, so check
-  after every upgrade.  First thing to chase: the QMI WDA data format may be stuck in
-  QMAP from manual `qmicli` experiments (the feed's `qmicli` is ABI-broken against this
-  image's libqmi, so the restore may never have landed).  Upload is also far noisier than download on this link: 2-30 Mbps on a
+  **Caveat — the multiplex patch is load bearing, and now we know why** (2026-09-19,
+  ModemManager 1.24 debug log): the RM520N-GL's firmware default data format is QMAP v5
+  aggregation.  For a plain bearer MM sets aggregation to "disabled" and then sends WDS
+  Start Network, which the module never answers; the connect sits in "connecting" until
+  the 120 s timeout.  With `multiplex=required` MM leaves QMAP v5 alone and the call
+  completes in about 10 s.  Reproduced with the patched proto and `multiplex=none`, with
+  the pristine stock proto (MM's default is none), and earlier on the board's own TI USB
+  controller, so it is the module plus MM, not this patch or the USB path.  Upstream
+  OpenWrt's proto (master, 2026-09) still has no multiplex option.  If the patch ever
+  fails to apply after a sysupgrade it now logs at daemon.err and leaves
+  `/etc/velo540-mm-multiplex.FAILED`; cellular will not come up until it is fixed.
+  Upload is also far noisier than download on this link: 2-30 Mbps on a
   single stream and a steady 13-15 Mbps across six, against 240+ Mbps down, and it tracks
   which cell the modem is camped on rather than anything configurable here.
   `velo540-ttl` rewrites TTL/hop-limit to 65 on `wwan0` so forwarded traffic is not
@@ -108,6 +111,21 @@ backgrounded.
   replaces the board's TI TUSB7340 for the modem: 5 Gbps link, no resets, 199 Mbps on
   first measurement against 115 on USB 2 with a worse radio.  Adding it renumbers the USB
   buses (Renesas usb1/usb3, TI usb4/usb5); the hotplug hook handles the modem's path.
+* **House-wide failover** (`/etc/uci-defaults/70-velo540-uplink`, spec in
+  home-network-ops `docs/house-failover-spec.md`): GE2 (`eth5`) is `uplink2`, a /30 to a
+  spare router port; the cellular interface sits in its own `cell` zone and the only
+  forwardings into it are `uplink`→`cell` and `lan`→`cell`, so house traffic can never
+  loop back out GE1 if the two boxes fail over a few seconds apart (it is dropped
+  instead).  CAKE (`sqm.cell`, needs kmod-sched-cake/kmod-ifb/sqm-scripts in the image)
+  shapes `qmapmux00` itself with `diffserv4`; `velo540-ttl` also marks everything the
+  box originates CS6 so management traffic (Tailscale, SSH, witness, PDU) rides above a
+  bulk download.  cake-autorate (installed from GitHub into `/root/cake-autorate`, kept
+  by sysupgrade.conf, needs bash + fping) is started by `velo540-failover` only while
+  the house is on cellular and stopped on recovery: its reflector pings follow the
+  default route, so left running they would measure the fibre and cost ~3 GB/month.
+  vnstat2 meters `qmapmux00` with the cycle rolling on the 7th, database in
+  `/etc/vnstat`.  The router side (`cellwan` on its spare port, metric 50, and the
+  `router-failover` tracker) lives in home-network-ops `provisioning/router/`.
 * **Cellular measurement**: `velo540-celltest` (add `quick` to skip transfers) prints
   the four receive chains sampled under load, the serving cell and throughput.  Use it
   to score antenna moves: the chains should land within ~3 dB of each other with SINR
@@ -191,8 +209,7 @@ the same one (the kernel would mount the wrong rootfs by PARTUUID).
 * PoE (no PSE found on these units).
 * PXE/TFTP server for recovering other machines from the closet.
 * ser2net consoles for other devices (packages are in the image, nothing attached yet).
-* Cellular failover: ModemManager, mwan3 and the QMI/MBIM drivers are in the
-  image; a USB modem (e.g. RM520N-GL in a USB carrier) is the plan, since no
-  mini-PCIe slot has USB.
+* House-wide failover commissioning (cable, dry run, enable, exercise) per the
+  spec; mwan3 is in the image but must stay off.
 * Replacement fan for the 540: Sunon MF50101V3-1000U-G99 or any quiet 50x10 mm
   12 V 2- or 3-wire fan, spliced onto the existing connector.

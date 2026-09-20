@@ -14,5 +14,14 @@ start() {
 		nft add rule inet velo_ttl post oifname "$o" ip ttl set 65
 		nft add rule inet velo_ttl post oifname "$o" ip6 hoplimit set 65
 	done
+	# Management traffic first on cellular: everything this box itself originates
+	# (Tailscale, SSH, witness probes, PDU) leaves marked CS6, which CAKE's
+	# diffserv4 puts in the Voice tin above the house's bulk traffic.  Forwarded
+	# packets never pass the output hook, so they are untouched.
+	nft add chain inet velo_ttl out '{ type filter hook output priority mangle; }'
+	for o in "wwan0" "qmapmux*" "rmnet*"; do
+		nft add rule inet velo_ttl out oifname "$o" ip dscp set cs6
+		nft add rule inet velo_ttl out oifname "$o" ip6 dscp set cs6
+	done
 }
 stop() { nft delete table inet velo_ttl 2>/dev/null; }

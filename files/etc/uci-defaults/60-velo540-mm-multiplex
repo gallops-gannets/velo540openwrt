@@ -17,24 +17,24 @@
 # left alone and the bearer is not multiplexed.
 #
 # That was meant to be a safe fallback and it is NOT.  THIS PATCH IS LOAD
-# BEARING: on the tested box a non-multiplexed bearer no longer completes at
-# all.  Proven 2026-09-16 by restoring the stock proto from a pristine copy,
-# clearing the multiplex option and deleting the stale mux links -- the modem
-# still would not connect over three attempts and a ModemManager restart, and
-# only came back when multiplexing was re-enabled.  So the cause is NOT this
-# patch; something else about the modem or ModemManager state has made the
-# plain path unusable, and it is unresolved.  Consequence: if this patch fails
-# to apply after a sysupgrade, the box loses cellular entirely.  Check it after
-# every upgrade until the plain path is understood.
-#
-# Suspect worth chasing first: the QMI WDA data format may be stuck in QMAP
-# from the manual qmicli experiments on 2026-09-15 (the qmicli in the feed is
-# ABI-broken against this image's libqmi, so the restore call may never have
-# landed).  A non-multiplexed bearer would fail exactly like this if the modem
-# is still framing QMAP.
+# BEARING: on the tested box a non-multiplexed bearer never completes.
+# Cause found 2026-09-19 with ModemManager debug logging (MM 1.24, RM520N-GL,
+# Renesas USB 3 host): the module's firmware default data format is QMAP v5
+# aggregation.  For a plain bearer MM switches that to "disabled" (WDA Set Data
+# Format), then sends WDS Start Network, and the module never answers it; the
+# connect sits in "connecting" until mmcli's 120 s timeout.  With
+# multiplex=required MM keeps QMAP v5 and the call completes in ~10 s.  Proven
+# three ways: patched proto with multiplex=none, the pristine stock proto with
+# no option (MM's default is none), and the same again with the earlier TI host
+# controller on 2026-09-16.  So this is the module firmware plus MM, not this
+# patch and not the USB path.  Consequence: if the patch fails to apply after a
+# sysupgrade, the box loses cellular.  A failure now leaves
+# /etc/velo540-mm-multiplex.FAILED and logs at daemon.err so it can be seen.
 F=${MM_PROTO:-/lib/netifd/proto/modemmanager.sh}
 [ -f "$F" ] || exit 0
-grep -q 'velo540: multiplex' "$F" && exit 0
+FLAG=/etc/velo540-mm-multiplex.FAILED
+fail() { logger -p daemon.err -t velo540-mm-multiplex "proto patch did NOT apply ($1): cellular will not connect"; echo "$(date) $1" > $FLAG; rm -f /tmp/.mm-multiplex.$$; exit 0; }
+grep -q 'velo540: multiplex' "$F" && { rm -f $FLAG; exit 0; }
 
 awk '
 # 1. declare the option next to the other strings
@@ -81,15 +81,16 @@ awk '
 	ren = 1
 }
 { print }
-' "$F" > /tmp/.mm-multiplex.$$ || exit 0
+' "$F" > /tmp/.mm-multiplex.$$ || fail awk
 
 # Only adopt the result if every edit landed and the shell still parses it.
 for pat in 'proto_config_add_string multiplex' 'password multiplex' 'multiplex=${multiplex}' 'muxnew' 'velo540: mux cleanup'; do
-	grep -q "$pat" /tmp/.mm-multiplex.$$ || { rm -f /tmp/.mm-multiplex.$$; exit 0; }
+	grep -q "$pat" /tmp/.mm-multiplex.$$ || fail "missing: $pat"
 done
-sh -n /tmp/.mm-multiplex.$$ 2>/dev/null || { rm -f /tmp/.mm-multiplex.$$; exit 0; }
+sh -n /tmp/.mm-multiplex.$$ 2>/dev/null || fail syntax
 
 cat /tmp/.mm-multiplex.$$ > "$F"
 rm -f /tmp/.mm-multiplex.$$
 chmod 755 "$F"
+rm -f $FLAG
 exit 0
