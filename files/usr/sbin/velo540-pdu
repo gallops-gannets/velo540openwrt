@@ -3,12 +3,27 @@
 
 Usage:
   velo540-pdu status                 all outlets, with names if configured
-  velo540-pdu on|off|cycle <outlet>  outlet number 1-8, or a configured name
+  velo540-pdu on|off <outlet>        outlet number 1-8, or a configured name
+  velo540-pdu cycle <outlet> [secs]  off, wait, on.  secs defaults to the
+                                     outlet's entry in uci velo540.@pdu[0].cycle
+                                     (list of name=secs), else cycle_s, else 60
 
 Talks to the PDU's REST API (manual section 10): POST /services/auth/ for a
 token, then /services/retrieve/ and /services/control/.  The token lives five
-minutes; we fetch a fresh one every run.  Cycle uses the PDU's own per-outlet
-cycle time (10 s by default).
+minutes; we fetch a fresh one every run.
+
+Why cycle is off / wait / on and not the PDU's own cycle command: the PDU's
+cycle time is 10 s, and a PC power supply holds its standby rail longer than
+that, so the board never sees AC go away and a machine that was shut down
+cleanly stays off (Tower, 2026-11-17; the backup server needs ~45 s for the same
+reason).  The "on" half runs detached in its own session, so it still happens
+if the SSH session that started the cycle dies - which it will when the outlet
+is the router's.  It retries for two minutes and logs to syslog as velo540-pdu.
+"cycle <outlet> 0" uses the PDU's own 10 s cycle.
+
+How long is long enough depends on the machine.  Tower, shut down cleanly with
+ErP enabled in its BIOS, did NOT start after 60 s off and DID after 300 s
+(2026-11-17), hence `list cycle 'tower=300'`.  Nobody has bisected between.
 
 Config:
   /etc/velo540-pdu.secret            admin password, mode 600 (NOT preserved by
@@ -20,13 +35,17 @@ The velo's own address is whitelisted on the PDU so its fail2ban (3 failures in
 300 s -> 300 s ban) can never lock this script out; do not remove that entry.
 """
 import json
+import os
+import signal
 import subprocess
 import sys
+import time
 import urllib.request
 
 SECRET = "/etc/velo540-pdu.secret"
 USER = "admin"
 TIMEOUT = 8
+CYCLE_S = 60
 
 
 def uci(key, default=None):
@@ -89,10 +108,68 @@ def main():
     target = nm.get(sys.argv[2], sys.argv[2])
     if not target.isdigit() or not 1 <= int(target) <= 8:
         print(f"unknown outlet {sys.argv[2]!r}; names: {', '.join(nm) or 'none'}"); return 2
-    r = post(host, "/services/control/",
-             {"token": tok, "control": "outlet", "command": sys.argv[1], "outlets": [target]})
-    ok = r.get("success") == "true"
-    print(f"{sys.argv[1]} outlet {target} ({by_num.get(target, 'unnamed')}): {'ok' if ok else 'FAILED ' + str(r.get('message'))}")
+    label = by_num.get(target, "unnamed")
+
+    def control(token, command):
+        r = post(host, "/services/control/",
+                 {"token": token, "control": "outlet", "command": command, "outlets": [target]})
+        return r.get("success") == "true", str(r.get("message"))
+
+    secs = None
+    if sys.argv[1] == "cycle":
+        per = {}
+        for item in (uci("velo540.@pdu[0].cycle", "") or "").split():
+            if "=" in item:
+                k, v = item.split("=", 1)
+                per[nm.get(k, k)] = v
+        raw = (sys.argv[3] if len(sys.argv) > 3
+               else per.get(target) or uci("velo540.@pdu[0].cycle_s", str(CYCLE_S)))
+        if not raw.isdigit() or int(raw) > 900:
+            print(f"cycle seconds must be 0-900, got {raw!r}"); return 2
+        secs = int(raw)
+
+    if not secs:  # on, off, or the PDU's own short cycle
+        ok, msg = control(tok, sys.argv[1])
+        print(f"{sys.argv[1]} outlet {target} ({label}): {'ok' if ok else 'FAILED ' + msg}")
+        return 0 if ok else 1
+
+    ok, msg = control(tok, "off")
+    if not ok:
+        print(f"cycle outlet {target} ({label}): off FAILED {msg}; nothing changed"); return 1
+    print(f"cycle outlet {target} ({label}): off ok; on in {secs} s (runs on the box even if this session drops)")
+    sys.stdout.flush()
+
+    pid = os.fork()
+    if pid == 0:
+        # The "on" half, in its own session so a dropped SSH cannot stop it.
+        os.setsid()
+        signal.signal(signal.SIGHUP, signal.SIG_IGN)
+        null = os.open(os.devnull, os.O_RDWR)
+        for fd in (0, 1, 2):
+            os.dup2(null, fd)
+
+        def say(text):
+            subprocess.run(["logger", "-t", "velo540-pdu", text])
+
+        time.sleep(secs)
+        for attempt in range(1, 13):
+            try:
+                a = post(host, "/services/auth/", {"username": USER, "password": pw})
+                if a.get("success") == "true" and control(a["token"], "on")[0]:
+                    say(f"cycle outlet {target} ({label}): on ok after {secs} s off (attempt {attempt})")
+                    os._exit(0)
+            except SystemExit:
+                pass
+            time.sleep(10)
+        say(f"cycle outlet {target} ({label}): ON FAILED after 12 attempts - the outlet is still OFF")
+        os._exit(1)
+
+    try:
+        _, status = os.waitpid(pid, 0)
+    except KeyboardInterrupt:
+        print("interrupted; the on step is still scheduled"); return 0
+    ok = os.WIFEXITED(status) and os.WEXITSTATUS(status) == 0
+    print(f"cycle outlet {target} ({label}): on {'ok' if ok else 'FAILED - the outlet is still OFF, run: velo540-pdu on ' + target}")
     return 0 if ok else 1
 
 
