@@ -40,5 +40,5 @@ config pdu
 	# list outlet 'router=1'    # name=number, one per outlet you want to address by name
 	# list outlet 'ont=2'
 	# option cycle_s '60'       # default off time for "velo540-pdu cycle" (off, wait, on)
-	# list cycle 'tower=300'    # per-outlet off time, name=seconds; a PC shut down cleanly
+	# list cycle 'tower=30'     # per-outlet off time, name=seconds; a PC shut down cleanly
 	#                           # may need minutes before its board sees AC go away

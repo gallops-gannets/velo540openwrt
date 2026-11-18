@@ -23,7 +23,8 @@ is the router's.  It retries for two minutes and logs to syslog as velo540-pdu.
 
 How long is long enough depends on the machine.  Tower, shut down cleanly with
 ErP enabled in its BIOS, did NOT start after 60 s off and DID after 300 s
-(2026-11-17), hence `list cycle 'tower=300'`.  Nobody has bisected between.
+(2026-11-17).  With ErP disabled (2026-11-18) the PDU's own 10 s cycle started
+it, so the live setting is now `list cycle 'tower=30'`.
 
 Config:
   /etc/velo540-pdu.secret            admin password, mode 600 (NOT preserved by
