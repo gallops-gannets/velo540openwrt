@@ -1,6 +1,6 @@
 diff -Naur a/drivers/net/ethernet/intel/igb/Makefile b/drivers/net/ethernet/intel/igb/Makefile
---- a/drivers/net/ethernet/intel/igb/Makefile	2026-09-08 01:13:22
-+++ b/drivers/net/ethernet/intel/igb/Makefile	2026-09-08 01:13:22
+--- a/drivers/net/ethernet/intel/igb/Makefile	2026-11-24 20:29:48.864038909 +0000
++++ b/drivers/net/ethernet/intel/igb/Makefile	2026-11-24 20:29:07.311962948 +0000
 @@ -8,4 +8,4 @@
  
  igb-y := igb_main.o igb_ethtool.o e1000_82575.o \
@@ -8,8 +8,8 @@ diff -Naur a/drivers/net/ethernet/intel/igb/Makefile b/drivers/net/ethernet/inte
 -	 e1000_i210.o igb_ptp.o igb_hwmon.o
 +	 e1000_i210.o igb_ptp.o igb_hwmon.o igb_vc.o
 diff -Naur a/drivers/net/ethernet/intel/igb/e1000_82575.c b/drivers/net/ethernet/intel/igb/e1000_82575.c
---- a/drivers/net/ethernet/intel/igb/e1000_82575.c	2026-09-08 01:13:22
-+++ b/drivers/net/ethernet/intel/igb/e1000_82575.c	2026-09-08 01:13:22
+--- a/drivers/net/ethernet/intel/igb/e1000_82575.c	2026-11-24 20:29:48.856038894 +0000
++++ b/drivers/net/ethernet/intel/igb/e1000_82575.c	2026-11-24 20:29:07.315962955 +0000
 @@ -221,6 +221,12 @@
  		}
  	}
@@ -36,22 +36,22 @@ diff -Naur a/drivers/net/ethernet/intel/igb/e1000_82575.c b/drivers/net/ethernet
  	/* setup PHY parameters */
  	ret_val = igb_init_phy_params_82575(hw);
  
-@@ -838,6 +850,12 @@
- 	 */
- 	if (!(igb_sgmii_active_82575(hw))) {
- 		phy->addr = 1;
-+		ret_val = igb_get_phy_id(hw);
-+		goto out;
-+	}
-+
-+	/* VeloCloud edge5x0: phy->addr was set by igb_vc_probe() */
-+	if (hw->dev_spec._82575.vc_ext_bus) {
+@@ -841,6 +853,12 @@
  		ret_val = igb_get_phy_id(hw);
  		goto out;
  	}
++
++	/* VeloCloud edge5x0: phy->addr was set by igb_vc_probe() */
++	if (hw->dev_spec._82575.vc_ext_bus) {
++		ret_val = igb_get_phy_id(hw);
++		goto out;
++	}
+ 
+ 	if (igb_sgmii_uses_mdio_82575(hw)) {
+ 		switch (hw->mac.type) {
 diff -Naur a/drivers/net/ethernet/intel/igb/e1000_82575.h b/drivers/net/ethernet/intel/igb/e1000_82575.h
---- a/drivers/net/ethernet/intel/igb/e1000_82575.h	2026-09-08 01:13:22
-+++ b/drivers/net/ethernet/intel/igb/e1000_82575.h	2026-09-08 01:13:22
+--- a/drivers/net/ethernet/intel/igb/e1000_82575.h	2026-11-24 20:29:48.856038894 +0000
++++ b/drivers/net/ethernet/intel/igb/e1000_82575.h	2026-11-24 20:29:07.315962955 +0000
 @@ -6,6 +6,11 @@
  
  void igb_shutdown_serdes_link_82575(struct e1000_hw *hw);
@@ -65,8 +65,8 @@ diff -Naur a/drivers/net/ethernet/intel/igb/e1000_82575.h b/drivers/net/ethernet
  void igb_rx_fifo_flush_82575(struct e1000_hw *hw);
  s32 igb_read_i2c_byte(struct e1000_hw *hw, u8 byte_offset, u8 dev_addr,
 diff -Naur a/drivers/net/ethernet/intel/igb/e1000_hw.h b/drivers/net/ethernet/intel/igb/e1000_hw.h
---- a/drivers/net/ethernet/intel/igb/e1000_hw.h	2026-09-08 01:13:22
-+++ b/drivers/net/ethernet/intel/igb/e1000_hw.h	2026-09-08 01:13:22
+--- a/drivers/net/ethernet/intel/igb/e1000_hw.h	2026-11-24 20:29:48.856038894 +0000
++++ b/drivers/net/ethernet/intel/igb/e1000_hw.h	2026-11-24 20:29:07.319962962 +0000
 @@ -13,6 +13,7 @@
  #include "e1000_defines.h"
  
@@ -91,9 +91,17 @@ diff -Naur a/drivers/net/ethernet/intel/igb/e1000_hw.h b/drivers/net/ethernet/in
  
  struct e1000_hw {
 diff -Naur a/drivers/net/ethernet/intel/igb/igb.h b/drivers/net/ethernet/intel/igb/igb.h
---- a/drivers/net/ethernet/intel/igb/igb.h	2026-09-08 01:13:22
-+++ b/drivers/net/ethernet/intel/igb/igb.h	2026-09-08 01:13:22
-@@ -719,6 +719,8 @@
+--- a/drivers/net/ethernet/intel/igb/igb.h	2026-11-24 20:29:48.860038901 +0000
++++ b/drivers/net/ethernet/intel/igb/igb.h	2026-11-24 20:29:43.844029535 +0000
+@@ -565,6 +565,7 @@
+ 
+ 	struct timer_list watchdog_timer;
+ 	struct timer_list phy_info_timer;
++	struct work_struct phy_info_task;
+ 
+ 	u16 mng_vlan_id;
+ 	u32 bd_number;
+@@ -719,6 +720,8 @@
  		      struct igb_ring *ring,
  		      struct xdp_frame *xdpf);
  int igb_open(struct net_device *netdev);
@@ -103,9 +111,33 @@ diff -Naur a/drivers/net/ethernet/intel/igb/igb.h b/drivers/net/ethernet/intel/i
  int igb_up(struct igb_adapter *);
  void igb_down(struct igb_adapter *);
 diff -Naur a/drivers/net/ethernet/intel/igb/igb_main.c b/drivers/net/ethernet/intel/igb/igb_main.c
---- a/drivers/net/ethernet/intel/igb/igb_main.c	2026-09-08 01:13:22
-+++ b/drivers/net/ethernet/intel/igb/igb_main.c	2026-09-08 03:15:47
-@@ -3515,6 +3515,9 @@
+--- a/drivers/net/ethernet/intel/igb/igb_main.c	2026-11-24 20:29:48.860038901 +0000
++++ b/drivers/net/ethernet/intel/igb/igb_main.c	2026-11-24 20:29:43.880029602 +0000
+@@ -120,6 +120,7 @@
+ static void igb_clean_rx_ring(struct igb_ring *);
+ static void igb_set_rx_mode(struct net_device *);
+ static void igb_update_phy_info(struct timer_list *);
++static void igb_phy_info_task(struct work_struct *);
+ static void igb_watchdog(struct timer_list *);
+ static void igb_watchdog_task(struct work_struct *);
+ static netdev_tx_t igb_xmit_frame(struct sk_buff *skb, struct net_device *);
+@@ -2177,6 +2178,7 @@
+ 
+ 	del_timer_sync(&adapter->watchdog_timer);
+ 	del_timer_sync(&adapter->phy_info_timer);
++	cancel_work_sync(&adapter->phy_info_task);
+ 
+ 	/* record the stats before reset*/
+ 	spin_lock(&adapter->stats64_lock);
+@@ -3398,6 +3400,7 @@
+ 
+ 	timer_setup(&adapter->watchdog_timer, igb_watchdog, 0);
+ 	timer_setup(&adapter->phy_info_timer, igb_update_phy_info, 0);
++	INIT_WORK(&adapter->phy_info_task, igb_phy_info_task);
+ 
+ 	INIT_WORK(&adapter->reset_task, igb_reset_task);
+ 	INIT_WORK(&adapter->watchdog_task, igb_watchdog_task);
+@@ -3515,6 +3518,9 @@
  	if (err)
  		goto err_register;
  
@@ -115,7 +147,7 @@ diff -Naur a/drivers/net/ethernet/intel/igb/igb_main.c b/drivers/net/ethernet/in
  	/* carrier off reporting is important to ethtool even BEFORE open */
  	netif_carrier_off(netdev);
  
-@@ -3640,6 +3643,7 @@
+@@ -3640,6 +3646,7 @@
  	if (hw->flash_address)
  		iounmap(hw->flash_address);
  err_sw_init:
@@ -123,18 +155,54 @@ diff -Naur a/drivers/net/ethernet/intel/igb/igb_main.c b/drivers/net/ethernet/in
  	kfree(adapter->mac_table);
  	kfree(adapter->shadow_vfta);
  	igb_clear_interrupt_scheme(adapter);
-@@ -3884,6 +3888,7 @@
- 	igb_disable_sriov(pdev, false);
+@@ -3861,11 +3868,14 @@
+ 	 */
+ 	set_bit(__IGB_DOWN, &adapter->state);
+ 	del_timer_sync(&adapter->watchdog_timer);
+-	del_timer_sync(&adapter->phy_info_timer);
+ 
+ 	cancel_work_sync(&adapter->reset_task);
+ 	cancel_work_sync(&adapter->watchdog_task);
+ 
++	/* only now: the watchdog task is what re-arms phy_info_timer */
++	del_timer_sync(&adapter->phy_info_timer);
++	cancel_work_sync(&adapter->phy_info_task);
++
+ #ifdef CONFIG_IGB_DCA
+ 	if (adapter->flags & IGB_FLAG_DCA_ENABLED) {
+ 		dev_info(&pdev->dev, "DCA disabled\n");
+@@ -3885,6 +3895,8 @@
  #endif
  
-+	igb_vc_mii_unregister(adapter);
  	unregister_netdev(netdev);
++	/* after the netdev is gone, so nothing can reach the PHY any more */
++	igb_vc_mii_unregister(adapter);
  
  	igb_clear_interrupt_scheme(adapter);
+ 
+@@ -5397,6 +5409,18 @@
+ static void igb_update_phy_info(struct timer_list *t)
+ {
+ 	struct igb_adapter *adapter = from_timer(adapter, t, phy_info_timer);
++
++	/* The PHY of an edge5x0 WAN port is reached through mdiobus_read(),
++	 * which takes a mutex: never read it from timer (softirq) context.
++	 */
++	schedule_work(&adapter->phy_info_task);
++}
++
++static void igb_phy_info_task(struct work_struct *work)
++{
++	struct igb_adapter *adapter = container_of(work, struct igb_adapter,
++						   phy_info_task);
++
+ 	igb_get_phy_info(&adapter->hw);
+ }
+ 
 diff -Naur a/drivers/net/ethernet/intel/igb/igb_vc.c b/drivers/net/ethernet/intel/igb/igb_vc.c
---- a/drivers/net/ethernet/intel/igb/igb_vc.c	1969-12-31 18:00:00
-+++ b/drivers/net/ethernet/intel/igb/igb_vc.c	2026-09-08 01:13:22
-@@ -0,0 +1,307 @@
+--- a/drivers/net/ethernet/intel/igb/igb_vc.c	1970-01-01 00:00:00.000000000 +0000
++++ b/drivers/net/ethernet/intel/igb/igb_vc.c	2026-11-24 20:29:43.888029617 +0000
+@@ -0,0 +1,325 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/* VeloCloud Edge 520/540 ("edge5x0") platform glue for igb.
 + *
@@ -174,6 +242,7 @@ diff -Naur a/drivers/net/ethernet/intel/igb/igb_vc.c b/drivers/net/ethernet/inte
 +#include <linux/phy.h>
 +#include <linux/bitfield.h>
 +#include <linux/delay.h>
++#include <linux/preempt.h>
 +
 +#include "e1000_mac.h"
 +#include "e1000_82575.h"
@@ -284,6 +353,11 @@ diff -Naur a/drivers/net/ethernet/intel/igb/igb_vc.c b/drivers/net/ethernet/inte
 +	struct mii_bus *bus = hw->dev_spec._82575.vc_ext_bus;
 +	int ret;
 +
++	/* mdiobus_read() takes the bus mutex: fail rather than sleep in
++	 * atomic context (softirq, IRQ, or a spinlock/preempt-off region)
++	 */
++	if (WARN_ONCE(!in_task() || !preemptible(), "igb-vc: ext MDIO from atomic ctx"))
++		return -E1000_ERR_PHY;
 +	if (!bus || offset > MAX_PHY_REG_ADDRESS)
 +		return -E1000_ERR_PARAM;
 +
@@ -298,6 +372,9 @@ diff -Naur a/drivers/net/ethernet/intel/igb/igb_vc.c b/drivers/net/ethernet/inte
 +{
 +	struct mii_bus *bus = hw->dev_spec._82575.vc_ext_bus;
 +
++	/* mdiobus_write() takes the bus mutex: fail rather than sleep */
++	if (WARN_ONCE(!in_task() || !preemptible(), "igb-vc: ext MDIO from atomic ctx"))
++		return -E1000_ERR_PHY;
 +	if (!bus || offset > MAX_PHY_REG_ADDRESS)
 +		return -E1000_ERR_PARAM;
 +
@@ -382,6 +459,14 @@ diff -Naur a/drivers/net/ethernet/intel/igb/igb_vc.c b/drivers/net/ethernet/inte
 +				 vc_ext_mdio);
 +			return -EPROBE_DEFER;
 +		}
++		/* Pin the module that owns the bus (mdio-gpio) while this
++		 * function holds it; the device reference alone does not stop
++		 * it from being unloaded under a bound igb.
++		 */
++		if (!try_module_get(bus->owner)) {
++			put_device(&bus->dev);
++			return -EPROBE_DEFER;
++		}
 +		dev_spec->vc_role = IGB_VC_ROLE_EXTPHY;
 +		dev_spec->vc_ext_bus = bus;
 +		hw->phy.addr = func - 2;
@@ -438,6 +523,7 @@ diff -Naur a/drivers/net/ethernet/intel/igb/igb_vc.c b/drivers/net/ethernet/inte
 +		dev_spec->vc_mii = NULL;
 +	}
 +	if (dev_spec->vc_ext_bus) {
++		module_put(dev_spec->vc_ext_bus->owner);	/* ref from igb_vc_probe() */
 +		put_device(&dev_spec->vc_ext_bus->dev);	/* ref from mdio_find_bus() */
 +		dev_spec->vc_ext_bus = NULL;
 +	}
