@@ -13,6 +13,15 @@ config fan
 	option on_above '0'
 	option tach 'auto'
 	option min_duty '40'
+	# Drive temperature input (kernel drivetemp hwmon, e.g. an mSATA SSD).
+	# Active only when a drivetemp sensor exists; built-in defaults shown:
+	# option drive_on '60'    # drive >= this C: fan never off, target >= min_rpm
+	#                         # (min_duty if 2-wire)
+	# option drive_off '55'   # ... until the drive is back at/below this C
+	# option drive_full '70'  # drive_on..drive_full ramps min_rpm..max_rpm;
+	#                         # at/above: max_rpm
+	#                         # drive_on '0' ignores drives.  The higher of the
+	#                         # drive and CPU target wins.
 
 # dsa: 0 = two dumb switches (eth0/eth1), 3 = DSA for both (lan1..lan8); see velo540-dsa
 config dsa

@@ -65,6 +65,17 @@ backgrounded.
   `min_duty` for 2-wire fans.  The stock Sunon MF50101V1 (3-wire, voltage
   controlled by the board) cannot run below ~2700 RPM; a quiet replacement is
   the only way to a silent 540.  Fanless 520s skip the service.
+  **Drive temperature**: if the kernel exposes a drive through `drivetemp`
+  hwmon (`kmod-hwmon-drivetemp`, in the image; e.g. an mSATA SSD, which idles
+  hot with the fan off), the hottest drive is read every loop (drives added
+  later are picked up; a drive that does not report is ignored, and a failed
+  read holds the last value for up to three loops).  At or above `drive_on`
+  (default 60 C) the fan is not allowed off and the target is at least
+  `min_rpm`, ramping to `max_rpm` at `drive_full` (70 C); it is released at or
+  below `drive_off` (55 C).  The higher of the drive and CPU targets wins;
+  2-wire fans use the same ramp on `min_duty`..255.  With no drive sensor
+  nothing changes.  Reading may keep some hard disks from spinning down;
+  `drive_on '0'` turns the input off.
 * **Bad RAM pages** (`config memmap`, `list reserve '4K$0x...'`): re-applied
   to grub.cfg every boot by `velo540-memmap` (one tested 540 has a single
   weak cell that logs corrected ECC machine-checks).

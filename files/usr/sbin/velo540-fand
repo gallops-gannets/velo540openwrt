@@ -22,9 +22,15 @@
 #       option on_above  '0'  #     and restart it (kick + min_rpm) once above this C
 #       option tach      'auto' # auto | 0: 0 = 2-wire fan, open-loop duty curve min_duty..255
 #       option min_duty  '40'   # open-loop duty at or below t_min (2-wire fans)
+#       option drive_on  '60'   # drive temperature input (kernel drivetemp hwmon, e.g. an mSATA SSD):
+#       option drive_off '55'   #   at/above drive_on the fan is never off and runs >= min_rpm, until
+#       option drive_full '70'  #   the drive is at/below drive_off; ramps to max_rpm at drive_full.
+#                               #   Inactive with no drivetemp sensor; drive_on 0 disables it.
 BUS=9; ADDR=0x2f
 u() { v=$(uci -q get velo540.@fan[0].$1); echo "${v:-$2}"; }
 min_rpm=$(u min_rpm 3400); max_rpm=$(u max_rpm 3900); tmin=$(u t_min 50); tmax=$(u t_max 75); period=$(u period 3); off_below=$(u off_below 0); on_above=$(u on_above 0); fan_off=0; tach=$(u tach auto); min_duty=$(u min_duty 40); notach=0
+drive_on=$(u drive_on 60); drive_off=$(u drive_off 55); drive_full=$(u drive_full 70); drive_hot=0; dmiss=0; dlast=0
+[ "$drive_on" -gt 0 ] && [ "$drive_off" -ge "$drive_on" ] && { drive_off=$(( drive_on - 1 )); logger -t velo540-fand "drive_off >= drive_on: using $drive_off"; }
 E() { i2cset -y $BUS $ADDR "$1" "$2"; }
 G() { i2cget -y $BUS $ADDR "$1" 2>/dev/null; }
 
@@ -40,6 +46,16 @@ E 0x2b 0x0c	# PWM base 26 kHz
 E 0x41 0x01	# divider 1
 E 0x42 0x10	# open-loop PWM: the loop below owns the drive
 
+drive_temp() {	# hottest drivetemp sensor in C, 0 = none; found afresh each call, a bad read drops that drive
+	m=0
+	for h in /sys/class/hwmon/hwmon*; do
+		[ "$(cat $h/name 2>/dev/null)" = drivetemp ] || continue
+		t=$(cat $h/temp1_input 2>/dev/null) || continue
+		case "$t" in ''|*[!0-9]*) continue ;; esac
+		t=$(( t / 1000 )); [ "$t" -gt "$m" ] && m=$t
+	done
+	echo $m
+}
 read_rpm() {	# -1 = read failed, 0 = no tach pulses, else RPM
 	hi=$(G 0x4e); lo=$(G 0x4f); [ -n "$hi" ] && [ -n "$lo" ] || { echo -1; return; }
 	t=$(( $(printf %d "$hi") * 256 + $(printf %d "$lo") ))
@@ -68,14 +84,29 @@ while :; do
 	if [ "$temp" -le "$tmin" ]; then target=$min_rpm
 	elif [ "$temp" -ge "$tmax" ]; then target=$max_rpm
 	else target=$(( min_rpm + (max_rpm - min_rpm) * (temp - tmin) / (tmax - tmin) )); fi
+	dt=0; dd=0
+	[ "$drive_on" -gt 0 ] && dt=$(drive_temp)
+	if [ "$dt" -gt 0 ]; then dmiss=0; dlast=$dt
+	elif [ $drive_hot -eq 1 ] && [ $dmiss -lt 3 ]; then dmiss=$(( dmiss + 1 )); dt=$dlast	# hold through brief read failures
+	fi
+	if [ "$dt" -gt 0 ]; then			# hysteresis: hot from drive_on until back at drive_off
+		if [ $drive_hot -eq 0 ] && [ "$dt" -ge "$drive_on" ]; then drive_hot=1; logger -t velo540-fand "drive ${dt}C >= ${drive_on}: fan held on"
+		elif [ $drive_hot -eq 1 ] && [ "$dt" -le "$drive_off" ]; then drive_hot=0; logger -t velo540-fand "drive ${dt}C <= ${drive_off}: released"; fi
+	elif [ $drive_hot -eq 1 ]; then drive_hot=0; logger -t velo540-fand "drive sensor gone: released"; fi
+	if [ $drive_hot -eq 1 ]; then			# drive_on..drive_full ramps min..max, the higher of the two wins
+		if [ "$dt" -ge "$drive_full" ]; then dtarget=$max_rpm; dd=255
+		elif [ "$dt" -le "$drive_on" ]; then dtarget=$min_rpm; dd=$min_duty
+		else dtarget=$(( min_rpm + (max_rpm - min_rpm) * (dt - drive_on) / (drive_full - drive_on) )); dd=$(( min_duty + (255 - min_duty) * (dt - drive_on) / (drive_full - drive_on) )); fi
+		[ "$dtarget" -gt "$target" ] && target=$dtarget
+	fi
 	rpm=$(read_rpm)
 	if [ $notach -eq 1 ]; then rpm=-1; fi	# never "stalls", never adjusts on tach
 	# optional fan-off-at-idle band (needs a tach: the loop below keeps it honest)
 	if [ "$off_below" -gt 0 ] && [ "$on_above" -gt "$off_below" ]; then
-		if [ $fan_off -eq 0 ] && [ "$temp" -le "$off_below" ]; then
+		if [ $fan_off -eq 0 ] && [ "$temp" -le "$off_below" ] && [ $drive_hot -eq 0 ]; then
 			fan_off=1; E 0x40 0; logger -t velo540-fand "temp ${temp}C <= ${off_below}: fan off"
-		elif [ $fan_off -eq 1 ] && [ "$temp" -ge "$on_above" ]; then
-			fan_off=0; tach=$(u tach auto); min_duty=$(u min_duty 40); notach=0; E 0x40 0x30; sleep 2; duty=14; E 0x40 $duty; zeros=0; logger -t velo540-fand "temp ${temp}C >= ${on_above}: fan on"
+		elif [ $fan_off -eq 1 ] && { [ "$temp" -ge "$on_above" ] || [ $drive_hot -eq 1 ]; }; then
+			fan_off=0; tach=$(u tach auto); min_duty=$(u min_duty 40); notach=0; E 0x40 0x30; sleep 2; duty=14; E 0x40 $duty; zeros=0; why="temp ${temp}C >= ${on_above}"; [ "$temp" -lt "$on_above" ] && why="drive ${dt}C >= ${drive_on}"; logger -t velo540-fand "$why: fan on"
 		fi
 		if [ $fan_off -eq 1 ]; then echo 0 > /tmp/velo540-fan.duty; sleep "$period"; continue; fi
 	fi
@@ -83,6 +114,7 @@ while :; do
 		if [ "$temp" -le "$tmin" ]; then d=$min_duty
 		elif [ "$temp" -ge "$tmax" ]; then d=255
 		else d=$(( min_duty + (255 - min_duty) * (temp - tmin) / (tmax - tmin) )); fi
+		[ "$dd" -gt "$d" ] && d=$dd
 		[ "$d" -ne "$duty" ] && { duty=$d; E 0x40 $duty; }
 	elif [ "$rpm" -lt 0 ]; then :			# i2c read failed this round: leave everything alone
 	elif [ "$rpm" -eq 0 ]; then			# no tach pulses: only a stall if it persists (3 rounds)
@@ -99,6 +131,7 @@ while :; do
 	fi
 	echo $duty > /tmp/velo540-fan.duty
 	n=$(( n + 1 ))
-	[ $(( n % 20 )) -eq 1 ] && logger -t velo540-fand "temp ${temp}C target ${target} rpm ${rpm} duty ${duty}"
+	ds=""; [ "$dt" -gt 0 ] && ds=" drive ${dt}C"
+	[ $(( n % 20 )) -eq 1 ] && logger -t velo540-fand "temp ${temp}C${ds} target ${target} rpm ${rpm} duty ${duty}"
 	sleep "$period"
 done
